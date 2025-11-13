@@ -18,6 +18,13 @@ For each .strm and .nfo pair, sharing a common file name when ignoring the file 
 
 There is a set of example data under the directory testdata. 
 
+## General requirements
+
+The entire web interface should be keyboard navigatable. 
+
+It should use htmx web framework. 
+ 
+
 # Repository Guidelines
 
 ## Project Structure & Module Organization
