@@ -71,11 +71,13 @@ const pageTpl = `<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>ytplv</title>
 <style>
-body{font-family:system-ui,-apple-system,Segoe UI,Roboto;max-width:1100px;margin:0 auto;padding:1rem}
+body{font-family:system-ui,-apple-system,Segoe UI,Roboto;margin:0;padding:16px 24px}
 header{display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem}
 ul{list-style:none;padding:0;margin:0}
-.layout{display:grid;grid-template-columns:1.2fr 1fr;gap:16px;align-items:start}
+.layout{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px;align-items:start}
 .panel{border:1px solid #ddd;border-radius:8px;padding:12px}
+.details{position:sticky;top:12px;align-self:start}
+.list{max-height:calc(100vh - 180px);overflow:auto}
 .dirs .dir-item{padding:6px;border-radius:6px;cursor:pointer;margin-bottom:4px}
 .dirs .dir-item:hover{background:#f6f6f6}
 .dirs .dir-item.active{background:#eef5ff}
@@ -89,14 +91,13 @@ ul{list-style:none;padding:0;margin:0}
 </style>
 <header>
   <div>
-    <a href="/{{.ParentPath}}">⬅ Up</a>
+    {{if ne .Path ""}}<a href="/{{.ParentPath}}">⬅ Up</a>{{end}}
     <strong style="margin-left:8px">/{{.Path}}</strong>
   </div>
   <a href="/">Root</a>
 </header>
 
 <section>
-  <h3>Items</h3>
   {{if .Entries}}
   <div class="layout">
     <div class="panel details" id="details" aria-live="polite">
