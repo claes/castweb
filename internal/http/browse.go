@@ -95,47 +95,41 @@ ul{list-style:none;padding:0;margin:0}
   <a href="/">Root</a>
 </header>
 
-<section class="dirs">
-  <h3>Folders</h3>
-  {{if .Dirs}}
-    <div class="panel" id="dirs">
-      <ul id="dirsList" role="listbox" aria-label="Folders">
-      {{range .Dirs}}
-        <li class="dir-item" role="option" aria-selected="false" tabindex="0" data-name="{{.}}" data-path="{{pjoin $.Path .}}">📁 {{.}}</li>
-      {{end}}
-      </ul>
-    </div>
-  {{else}}
-    <small>No subfolders</small>
-  {{end}}
-  <hr/>
-</section>
-
 <section>
-  <h3>Videos</h3>
-  {{if .Videos}}
+  <h3>Items</h3>
+  {{if .Entries}}
   <div class="layout">
     <div class="panel details" id="details" aria-live="polite">
-      <div class="muted">Select a video →</div>
+      <div class="muted">Select an item →</div>
     </div>
     <div class="panel list" id="list">
-      <ul role="listbox" aria-label="Videos">
-      {{range .Videos}}
-        <li class="item" role="option" aria-selected="false" tabindex="0"
-            data-title="{{if .Title}}{{.Title}}{{else}}{{.Name}}{{end}}"
-            data-id="{{.VideoID}}"
-            data-thumb="{{.ThumbURL}}"
-            data-tags="{{join .Tags ", "}}"
-            data-plot="{{.Plot}}">
-          {{if .ThumbURL}}<img class="thumb" src="{{.ThumbURL}}" alt="thumb">{{end}}
-          <div class="title">{{if .Title}}{{.Title}}{{else}}{{.Name}}{{end}}</div>
-        </li>
+      <ul role="listbox" aria-label="Items">
+      {{range .Entries}}
+        {{if eq .Kind "dir"}}
+          <li class="item" role="option" aria-selected="false" tabindex="0"
+              data-kind="dir"
+              data-title="{{.Name}}"
+              data-path="{{.Path}}">
+            <div class="title">📁 {{.Name}}</div>
+          </li>
+        {{else}}
+          <li class="item" role="option" aria-selected="false" tabindex="0"
+              data-kind="video"
+              data-title="{{if .Video.Title}}{{.Video.Title}}{{else}}{{.Video.Name}}{{end}}"
+              data-id="{{.Video.VideoID}}"
+              data-thumb="{{.Video.ThumbURL}}"
+              data-tags="{{join .Video.Tags ", "}}"
+              data-plot="{{.Video.Plot}}">
+            {{if .Video.ThumbURL}}<img class="thumb" src="{{.Video.ThumbURL}}" alt="thumb">{{end}}
+            <div class="title">{{if .Video.Title}}{{.Video.Title}}{{else}}{{.Video.Name}}{{end}}</div>
+          </li>
+        {{end}}
       {{end}}
       </ul>
     </div>
   </div>
   {{else}}
-    <small>No videos found in this folder</small>
+    <small>No items found in this folder</small>
   {{end}}
 </section>
 
@@ -145,7 +139,7 @@ ul{list-style:none;padding:0;margin:0}
   var parentPath = {{printf "%q" .ParentPath}};
   var details = document.getElementById('details');
   var list = document.getElementById('list');
-  var dirsList = document.getElementById('dirsList');
+  var dirsList = null; // deprecated separate folder list
   function esc(s){
     return String(s)
       .replace(/&/g,'&amp;')
@@ -187,24 +181,46 @@ ul{list-style:none;padding:0;margin:0}
     var plot = li.getAttribute('data-plot') || '';
     var html = '';
     html += '<h2 style="margin-top:0">' + esc(title) + '</h2>';
-    if (thumb) html += '<img src="' + esc(thumb) + '" alt="thumb" />';
-    if (tags) html += '<div class="muted" style="margin-top:6px">Tags: ' + esc(tags) + '</div>';
-    if (plot) html += '<p style="white-space:pre-wrap">' + esc(plot) + '</p>';
-    if (id) html += '<p><a target="_blank" href="https://www.youtube.com/watch?v=' + esc(id) + '">Open on YouTube</a></p>';
+    var kind = li.getAttribute('data-kind') || 'video';
+    if (kind === 'video') {
+      if (thumb) html += '<img src="' + esc(thumb) + '" alt="thumb" />';
+      if (tags) html += '<div class="muted" style="margin-top:6px">Tags: ' + esc(tags) + '</div>';
+      if (plot) html += '<p style="white-space:pre-wrap">' + esc(plot) + '</p>';
+      if (id) html += '<p><a target="_blank" href="https://www.youtube.com/watch?v=' + esc(id) + '">Open on YouTube</a></p>';
+    } else {
+      html += '<p class="muted">Folder. Press Enter or → to open.</p>';
+    }
     details.innerHTML = html;
   }
   if (list) {
     list.addEventListener('click', function(e){
       var li = e.target.closest('.item');
-      if (li) { show(li); li.focus(); }
+      if (!li) return;
+      var kind = li.getAttribute('data-kind') || 'video';
+      if (kind === 'dir') {
+        navigateTo(li.getAttribute('data-path') || '');
+      } else {
+        show(li); li.focus();
+      }
     });
     list.addEventListener('keydown', function(e){
       if (e.key === 'Enter' || e.key === ' ') {
         var li = e.target.closest('.item');
-        if (li) { e.preventDefault(); show(li); }
+        if (li) {
+          e.preventDefault();
+          var kind = li.getAttribute('data-kind') || 'video';
+          if (kind === 'dir') { navigateTo(li.getAttribute('data-path') || ''); }
+          else { show(li); }
+        }
       } else if (e.key === 'ArrowLeft' || e.key === 'Backspace') {
         e.preventDefault();
         navigateParent();
+      } else if (e.key === 'ArrowRight') {
+        var li = e.target.closest('.item') || list.querySelector('.item.active');
+        if (li) {
+          var kind = li.getAttribute('data-kind') || 'video';
+          if (kind === 'dir') { e.preventDefault(); navigateTo(li.getAttribute('data-path') || ''); }
+        }
       } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault();
         var items = Array.prototype.slice.call(list.querySelectorAll('.item'));
@@ -223,42 +239,6 @@ ul{list-style:none;padding:0;margin:0}
   if (list) {
     var first = list.querySelector('.item');
     if (first) { show(first); first.focus(); }
-  }
-  // Folder list interactions and keyboard navigation
-  if (dirsList) {
-    function selectDir(li){
-      if (!li) return;
-      Array.prototype.forEach.call(dirsList.querySelectorAll('.dir-item'), function(n){ n.classList.remove('active'); n.setAttribute('aria-selected', 'false'); });
-      li.classList.add('active');
-      li.setAttribute('aria-selected', 'true');
-    }
-    dirsList.addEventListener('click', function(e){
-      var li = e.target.closest('.dir-item');
-      if (li) { e.preventDefault(); navigateTo(li.getAttribute('data-path') || ''); }
-    });
-    dirsList.addEventListener('keydown', function(e){
-      if (e.key === 'Enter' || e.key === 'ArrowRight') {
-        var li = e.target.closest('.dir-item') || dirsList.querySelector('.dir-item.active');
-        if (li) { e.preventDefault(); navigateTo(li.getAttribute('data-path') || ''); }
-      } else if (e.key === 'ArrowLeft' || e.key === 'Backspace') {
-        e.preventDefault();
-        navigateParent();
-      } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-        e.preventDefault();
-        var items = Array.prototype.slice.call(dirsList.querySelectorAll('.dir-item'));
-        if (!items.length) return;
-        var current = dirsList.querySelector('.dir-item.active') || e.target.closest('.dir-item') || items[0];
-        var idx = items.indexOf(current);
-        if (idx === -1) idx = 0;
-        if (e.key === 'ArrowDown' && idx < items.length - 1) idx++;
-        if (e.key === 'ArrowUp' && idx > 0) idx--;
-        var next = items[idx];
-        if (next) { selectDir(next); next.focus(); next.scrollIntoView({ block: 'nearest' }); }
-      }
-    });
-    // Initial selection for directories
-    var firstDir = dirsList.querySelector('.dir-item');
-    if (firstDir) { selectDir(firstDir); }
   }
 })();
 </script>

@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/claes/ytplv/internal/model"
 	"github.com/claes/ytplv/internal/parser"
@@ -29,9 +30,10 @@ func BuildListing(root, rel string) (model.Listing, error) {
 
 	// Collect .strm base names and their paths; only include if matching .nfo exists.
 	type pair struct {
-		base string
-		strm string
-		nfo  string
+		base  string
+		strm  string
+		nfo   string
+		mtime time.Time
 	}
 	pairs := make(map[string]*pair)
 
@@ -51,6 +53,9 @@ func BuildListing(root, rel string) (model.Listing, error) {
 				pairs[base] = p
 			}
 			p.strm = filepath.Join(dir, name)
+			if fi, err := os.Stat(filepath.Join(dir, name)); err == nil {
+				p.mtime = fi.ModTime()
+			}
 		case ".nfo":
 			p := pairs[base]
 			if p == nil {
@@ -81,6 +86,13 @@ func BuildListing(root, rel string) (model.Listing, error) {
 			ThumbURL: thumb,
 			Tags:     tags,
 		})
+		// add to combined entries with mod time
+		listing.Entries = append(listing.Entries, model.Entry{
+			Kind:    "video",
+			Name:    titleOr(p.base, title),
+			ModTime: p.mtime,
+			Video:   &model.Video{Name: p.base, VideoID: vid, Title: title, Plot: plot, ThumbURL: thumb, Tags: tags},
+		})
 	}
 
 	sort.Strings(listing.Dirs)
@@ -99,7 +111,71 @@ func BuildListing(root, rel string) (model.Listing, error) {
 		}
 		return strings.ToLower(ti) < strings.ToLower(tj)
 	})
+	// For each immediate subdirectory, compute newest .strm mtime among valid pairs to sort
+	for _, d := range listing.Dirs {
+		sub := filepath.Join(dir, d)
+		var latest time.Time
+		if des, err := os.ReadDir(sub); err == nil {
+			// build local map to require pairs within subdir
+			mp := map[string]struct {
+				hasStrm bool
+				hasNfo  bool
+				m       time.Time
+			}{}
+			for _, de := range des {
+				if de.IsDir() {
+					continue
+				}
+				ext := strings.ToLower(filepath.Ext(de.Name()))
+				base := strings.TrimSuffix(de.Name(), ext)
+				switch ext {
+				case ".strm":
+					fi, _ := os.Stat(filepath.Join(sub, de.Name()))
+					m := time.Time{}
+					if fi != nil {
+						m = fi.ModTime()
+					}
+					v := mp[base]
+					v.hasStrm = true
+					v.m = m
+					mp[base] = v
+				case ".nfo":
+					v := mp[base]
+					v.hasNfo = true
+					mp[base] = v
+				}
+			}
+			for _, v := range mp {
+				if v.hasStrm && v.hasNfo {
+					if v.m.After(latest) {
+						latest = v.m
+					}
+				}
+			}
+		}
+		listing.Entries = append(listing.Entries, model.Entry{
+			Kind:    "dir",
+			Name:    d,
+			Path:    cleanRel(filepath.Join(listing.Path, d)),
+			ModTime: latest,
+		})
+	}
+	// Sort combined entries by modtime desc; if equal then by name
+	sort.SliceStable(listing.Entries, func(i, j int) bool {
+		mi, mj := listing.Entries[i].ModTime, listing.Entries[j].ModTime
+		if mi.Equal(mj) {
+			return strings.ToLower(listing.Entries[i].Name) < strings.ToLower(listing.Entries[j].Name)
+		}
+		return mi.After(mj)
+	})
 	return listing, nil
+}
+
+func titleOr(name, title string) string {
+	if strings.TrimSpace(title) != "" {
+		return title
+	}
+	return name
 }
 
 func cleanRel(rel string) string {
