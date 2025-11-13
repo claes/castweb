@@ -1,0 +1,25 @@
+# Build artifacts
+bin/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Go tooling
+.gocache/
+coverage.out
+*.test
+*.log
+
+# Nix
+result
+
+# Editors/OS
+.DS_Store
+.idea/
+.vscode/
+
+# Env/direnv
+.env
+.envrc
+.direnv/
