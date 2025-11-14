@@ -38,9 +38,8 @@
             # Use local working tree to include untracked files during development
             src = ./.;
             subPackages = [ "cmd/castweb" ];
-            # No external modules; disable vendoring (new and legacy attr)
+
             vendorHash = null;
-            vendorSha256 = null;
             ldflags = [
               "-s"
               "-w"
