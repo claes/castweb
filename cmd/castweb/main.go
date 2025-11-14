@@ -24,8 +24,10 @@ func main() {
 	// Flags
 	var root string
 	var ytcastDevice string
+	var port string
 	flag.StringVar(&root, "root", "", "root directory containing .strm/.nfo hierarchy (required)")
 	flag.StringVar(&ytcastDevice, "ytcast", "", "ytcast device id to cast to (optional)")
+	flag.StringVar(&port, "port", "", "port to listen on (required or set PORT env)")
 	flag.Parse()
 	if root == "" {
 		// accept positional arg if provided
@@ -37,6 +39,9 @@ func main() {
 		// allow env var fallback
 		ytcastDevice = os.Getenv("YTCAST_DEVICE")
 	}
+	if port == "" {
+		port = "8080"
+	}
 	if root == "" {
 		log.Fatal("missing root directory: pass -root PATH or positional PATH")
 	}
@@ -46,7 +51,6 @@ func main() {
 
 	mux := apphttp.NewServer(root, ytcastDevice)
 
-	port := getenv("PORT", "8080")
 	addr := ":" + port
 
 	srv := &nethttp.Server{

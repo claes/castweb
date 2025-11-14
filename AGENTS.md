@@ -18,7 +18,7 @@ It should use htmx web framework.
   - `api/` – OpenAPI/specs; `testdata/` for fixtures; `flake.nix` for Nix builds.
 
 ## Build, Test, and Development Commands
-- Run locally: `PORT=8080 go run ./cmd/castweb` (example: `curl :8080/health`).
+- Run locally: `go run ./cmd/castweb -root ./testdata -port 8080
 - Build binary: `go build -o bin/castweb ./cmd/castweb`.
 - Always run tests: `go test ./...` (required for every PR).
 - Extras: `go test -race ./...`, `go vet ./...`, `gofmt -s -w .`.

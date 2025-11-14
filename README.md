@@ -21,7 +21,7 @@ There is a set of example data under the directory testdata.
 Running the server
 
 - Build: `go build -o bin/castweb ./cmd/castweb`
-- Run: `PORT=8080 bin/castweb -root ./testdata -ytcast 12345678`
+- Run: `bin/castweb -root ./testdata -ytcast 12345678 -port 8080`
                                                       
 When you click a video item or press Enter on it, the server executes:
 
