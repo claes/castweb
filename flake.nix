@@ -16,6 +16,16 @@
       forAllSystems = nixpkgs.lib.genAttrs systems;
     in
     {
+      # Compat for flakes that still use defaultPackage.${system}
+      defaultPackage = forAllSystems (system: self.packages.${system}.default);
+
+      apps = forAllSystems (system: {
+        default = {
+          type = "app";
+          program = "${self.packages.${system}.default}/bin/castweb";
+        };
+      });
+
       packages = forAllSystems (
         system:
         let
