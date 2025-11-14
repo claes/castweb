@@ -1,22 +1,27 @@
 package http
 
 import (
+	"context"
 	"html/template"
+	"log"
 	nethttp "net/http"
 	"net/url"
+	"os/exec"
 	stdpath "path"
 	"strings"
+	"time"
 
 	"github.com/claes/ytplv/internal/browse"
 )
 
 type server struct {
-	root string
-	tpl  *template.Template
+	root         string
+	tpl          *template.Template
+	ytcastDevice string
 }
 
 // NewServer creates an HTTP handler for browsing video metadata rooted at dir.
-func NewServer(root string) nethttp.Handler {
+func NewServer(root string, ytcastDevice string) nethttp.Handler {
 	// simple HTML template without external assets
 	tpl := template.Must(template.New("page").Funcs(template.FuncMap{
 		"join": strings.Join,
@@ -31,13 +36,49 @@ func NewServer(root string) nethttp.Handler {
 			return a + "/" + b
 		},
 	}).Parse(pageTpl))
-	s := &server{root: root, tpl: tpl}
+	s := &server{root: root, tpl: tpl, ytcastDevice: ytcastDevice}
 	mux := nethttp.NewServeMux()
 	mux.HandleFunc("/", s.handleBrowse)
 	mux.HandleFunc("/health", func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		HealthHandler().ServeHTTP(w, r)
 	})
+	mux.HandleFunc("/play", s.handlePlay)
 	return mux
+}
+
+func (s *server) handlePlay(w nethttp.ResponseWriter, r *nethttp.Request) {
+	// Accept POST (htmx) or GET. Expect parameter "id" (YouTube video id).
+	if err := r.ParseForm(); err != nil {
+		log.Printf("/play: parse error: %v", err)
+		httpError(w, nethttp.StatusBadRequest, "invalid form")
+		return
+	}
+	id := r.FormValue("id")
+	if id == "" {
+		id = r.URL.Query().Get("id")
+	}
+	if id == "" {
+		log.Printf("/play: missing id")
+		httpError(w, nethttp.StatusBadRequest, "missing id")
+		return
+	}
+	if s.ytcastDevice == "" {
+		log.Printf("/play: device not configured; set -ytcast or YTCAST_DEVICE")
+		httpError(w, nethttp.StatusBadRequest, "ytcast device not configured")
+		return
+	}
+	// Build URL and execute ytcast
+	ytURL := "https://www.youtube.com/watch?v=" + id
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "ytcast", "-d", s.ytcastDevice, ytURL)
+	log.Printf("/play: casting id=%s device=%s", id, s.ytcastDevice)
+	if err := cmd.Run(); err != nil {
+		log.Printf("/play: ytcast error: %v", err)
+		httpError(w, nethttp.StatusInternalServerError, "failed to cast")
+		return
+	}
+	w.WriteHeader(nethttp.StatusNoContent)
 }
 
 func (s *server) handleBrowse(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -120,7 +161,11 @@ ul{list-style:none;padding:0;margin:0}
               data-id="{{.Video.VideoID}}"
               data-thumb="{{.Video.ThumbURL}}"
               data-tags="{{join .Video.Tags ", "}}"
-              data-plot="{{.Video.Plot}}">
+              data-plot="{{.Video.Plot}}"
+              hx-post="/play"
+              hx-vals='{"id":"{{.Video.VideoID}}"}'
+              hx-trigger="click, keyup[key=='Enter']"
+              hx-swap="none">
             {{if .Video.ThumbURL}}<img class="thumb" src="{{.Video.ThumbURL}}" alt="thumb">{{end}}
             <div class="title">{{if .Video.Title}}{{.Video.Title}}{{else}}{{.Video.Name}}{{end}}</div>
           </li>
@@ -134,6 +179,7 @@ ul{list-style:none;padding:0;margin:0}
   {{end}}
 </section>
 
+<script src="https://unpkg.com/htmx.org@1.9.12"></script>
 <script>
 (function(){
   var currentPath = {{printf "%q" .Path}};
@@ -240,6 +286,39 @@ ul{list-style:none;padding:0;margin:0}
   if (list) {
     var first = list.querySelector('.item');
     if (first) { show(first); first.focus(); }
+  }
+  // htmx status handling for /play
+  if (window.htmx) {
+    document.body.addEventListener('htmx:beforeRequest', function(evt){
+      var path = evt.detail && evt.detail.requestConfig && evt.detail.requestConfig.path;
+      if (path === '/play') {
+        var detailsEl = document.getElementById('details');
+        if (detailsEl) {
+          var n = document.createElement('div');
+          n.className = 'muted';
+          n.textContent = 'Casting…';
+          detailsEl.appendChild(n);
+        }
+      }
+    });
+    document.body.addEventListener('htmx:afterRequest', function(evt){
+      var path = evt.detail && evt.detail.requestConfig && evt.detail.requestConfig.path;
+      if (path === '/play') {
+        var xhr = evt.detail.xhr; var status = xhr ? xhr.status : 0;
+        var detailsEl = document.getElementById('details');
+        if (!detailsEl) return;
+        var msg = document.createElement('div');
+        msg.style.marginTop = '6px';
+        if (status >= 200 && status < 300) {
+          msg.textContent = 'Casting started.';
+        } else {
+          var text = xhr && xhr.responseText ? xhr.responseText : 'Failed to cast';
+          msg.textContent = text;
+          msg.className = 'muted';
+        }
+        detailsEl.appendChild(msg);
+      }
+    });
   }
 })();
 </script>

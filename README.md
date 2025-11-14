@@ -17,3 +17,16 @@ The .nfo files contain metadata about that video. Example
 For each .strm and .nfo pair, sharing a common file name when ignoring the file extension, the program aggregates the metadata and presents it in a list in the web ui. It should allow the user to browse the files to see the metadata, and go up and down in the file hierarchy. 
 
 There is a set of example data under the directory testdata. 
+
+Running the server
+
+- Build: `go build -o bin/server ./cmd/server`
+- Run: `PORT=8080 bin/server -root ./testdata -ytcast 12345678`
+                                                      
+When you click a video item or press Enter on it, the server executes:
+
+    ytcast -d <ytcast-device-id> https://www.youtube.com/watch?v=<video_id>
+
+Example:
+
+    ytcast -d 12345678 'https://www.youtube.com/watch?v=6Td8dTnElAU'

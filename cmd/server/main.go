@@ -23,13 +23,19 @@ func getenv(key, def string) string {
 func main() {
 	// Flags
 	var root string
+	var ytcastDevice string
 	flag.StringVar(&root, "root", "", "root directory containing .strm/.nfo hierarchy (required)")
+	flag.StringVar(&ytcastDevice, "ytcast", "", "ytcast device id to cast to (optional)")
 	flag.Parse()
 	if root == "" {
 		// accept positional arg if provided
 		if flag.NArg() > 0 {
 			root = flag.Arg(0)
 		}
+	}
+	if ytcastDevice == "" {
+		// allow env var fallback
+		ytcastDevice = os.Getenv("YTCAST_DEVICE")
 	}
 	if root == "" {
 		log.Fatal("missing root directory: pass -root PATH or positional PATH")
@@ -38,7 +44,7 @@ func main() {
 		log.Fatalf("invalid root directory: %s", root)
 	}
 
-	mux := apphttp.NewServer(root)
+	mux := apphttp.NewServer(root, ytcastDevice)
 
 	port := getenv("PORT", "8080")
 	addr := ":" + port
