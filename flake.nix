@@ -16,8 +16,9 @@
           default = pkgs.buildGoModule {
             pname = "ytplv-server";
             version = "unstable";
-            src = self;
-            subPackages = [ "cmd/server" ];
+            # Use local working tree to include untracked files during development
+            src = ./.;
+            subPackages = [ "cmd/castweb" ];
             # No external modules; disable vendoring
             vendorHash = null;
             ldflags = [ "-s" "-w" ];
@@ -26,7 +27,7 @@
             # Ensure ytcast is available at runtime by wrapping the binary
             nativeBuildInputs = [ pkgs.makeWrapper ];
             postInstall = ''
-              wrapProgram "$out/bin/server" \
+              wrapProgram "$out/bin/castweb" \
                 --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.ytcast ]}
             '';
           };
@@ -39,7 +40,7 @@
           default = pkgs.mkShell {
             packages = with pkgs; [ go_1_24 gopls gotools gotestsum ytcast ];
             shellHook = ''
-              echo "Dev shell ready. Run: go test ./... && go run ./cmd/server"
+              echo "Dev shell ready. Run: go test ./... && go run ./cmd/castweb"
             '';
           };
         });
@@ -50,7 +51,8 @@
         in {
           unit = pkgs.stdenv.mkDerivation {
             name = "go-tests";
-            src = self;
+            # Use local working tree for tests too
+            src = ./.;
             nativeBuildInputs = [ pkgs.go_1_24 ];
             buildPhase = "go test ./...";
             installPhase = ''

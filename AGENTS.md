@@ -10,7 +10,7 @@ It should use htmx web framework.
 ## Project Structure & Module Organization
 - Web service module: `github.com/claes/ytplv`.
 - Layout:
-  - `cmd/server/main.go` – HTTP entrypoint.
+  - `cmd/castweb/main.go` – HTTP entrypoint.
   - `internal/http/` – handlers, middleware, routing.
   - `internal/service/` – business logic; pure where possible.
   - `internal/store/` – persistence (DB, external APIs).
@@ -18,11 +18,11 @@ It should use htmx web framework.
   - `api/` – OpenAPI/specs; `testdata/` for fixtures; `flake.nix` for Nix builds.
 
 ## Build, Test, and Development Commands
-- Run locally: `PORT=8080 go run ./cmd/server` (example: `curl :8080/health`).
-- Build binary: `go build -o bin/server ./cmd/server`.
+- Run locally: `PORT=8080 go run ./cmd/castweb` (example: `curl :8080/health`).
+- Build binary: `go build -o bin/castweb ./cmd/castweb`.
 - Always run tests: `go test ./...` (required for every PR).
 - Extras: `go test -race ./...`, `go vet ./...`, `gofmt -s -w .`.
-- Nix dev shell: `nix develop` (pins Go/tooling). Build with `nix build` → `result/bin/server`.
+- Nix dev shell: `nix develop` (pins Go/tooling). Build with `nix build` → `result/bin/castweb`.
 - Nix checks: `nix flake check` should pass before merging.
 
 ## Coding Style & Naming Conventions
