@@ -153,6 +153,12 @@ func BuildListing(root, rel string) (model.Listing, error) {
 				}
 			}
 		}
+		// Fallback: if no valid pairs were found, use directory's own mtime
+		if latest.IsZero() {
+			if fi, err := os.Stat(sub); err == nil {
+				latest = fi.ModTime()
+			}
+		}
 		listing.Entries = append(listing.Entries, model.Entry{
 			Kind:    "dir",
 			Name:    d,
