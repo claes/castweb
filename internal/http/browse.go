@@ -1,7 +1,9 @@
 package http
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"html/template"
 	"log"
 	nethttp "net/http"
@@ -71,10 +73,31 @@ func (s *server) handlePlay(w nethttp.ResponseWriter, r *nethttp.Request) {
 	ytURL := "https://www.youtube.com/watch?v=" + id
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "ytcast", "-d", s.ytcastDevice, ytURL)
+	bin, _ := exec.LookPath("ytcast")
+	args := []string{"-d", s.ytcastDevice, ytURL}
+	cmd := exec.CommandContext(ctx, "ytcast", args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	// Log full command line with quoting for troubleshooting
+	q := make([]string, 0, len(args))
+	for _, a := range args {
+		q = append(q, fmt.Sprintf("%q", a))
+	}
+	prog := bin
+	if prog == "" {
+		prog = "ytcast"
+	}
 	log.Printf("/play: casting id=%s device=%s", id, s.ytcastDevice)
+	log.Printf("/play: exec %s %s", prog, strings.Join(q, " "))
 	if err := cmd.Run(); err != nil {
-		log.Printf("/play: ytcast error: %v", err)
+		exitCode := 0
+		if ee, ok := err.(*exec.ExitError); ok && ee.ProcessState != nil {
+			exitCode = ee.ProcessState.ExitCode()
+		}
+		outStr := strings.TrimSpace(stdout.String())
+		errStr := strings.TrimSpace(stderr.String())
+		log.Printf("/play: ytcast failed: err=%v exit=%d\nstdout: %s\nstderr: %s", err, exitCode, outStr, errStr)
 		httpError(w, nethttp.StatusInternalServerError, "failed to cast")
 		return
 	}
@@ -110,7 +133,7 @@ const pageTpl = `<!doctype html>
 <html lang="en">
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>ytplv</title>
+<title>castweb</title>
 <style>
 body{font-family:system-ui,-apple-system,Segoe UI,Roboto;margin:0;padding:16px 24px}
 header{display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem}
