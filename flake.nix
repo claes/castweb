@@ -33,7 +33,7 @@
         in
         {
           default = pkgs.buildGoModule {
-            pname = "ytplv-server";
+            pname = "castweb";
             version = "unstable";
             # Use local working tree to include untracked files during development
             src = ./.;
