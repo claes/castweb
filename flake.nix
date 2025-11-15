@@ -88,7 +88,13 @@
             # Use local working tree for tests too
             src = ./.;
             nativeBuildInputs = [ pkgs.go_1_24 ];
-            buildPhase = "go test ./...";
+            buildPhase = ''
+              export HOME="$TMPDIR"
+              export GOCACHE="$TMPDIR/go-build"
+              export GOMODCACHE="$TMPDIR/go-mod"
+              mkdir -p "$GOCACHE" "$GOMODCACHE"
+              go test ./...
+            '';
             installPhase = ''
               mkdir -p $out
               echo ok > $out/result
