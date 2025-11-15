@@ -400,6 +400,20 @@ ul{list-style:none;padding:0;margin:0}
           else if (kind === 'nav') { var href = li.getAttribute('data-href'); if (href) { window.location.href = href; } }
           else { show(li); }
         }
+      } else if (e.key === 'PageDown' || e.key === 'PageUp') {
+        e.preventDefault();
+        var delta = (e.key === 'PageDown' ? 1 : -1) * Math.max(0, list.clientHeight - 40);
+        list.scrollBy(0, delta);
+        // After scrolling, move selection to first visible item
+        var items = Array.prototype.slice.call(list.querySelectorAll('.item'));
+        if (!items.length) return;
+        var listRect = list.getBoundingClientRect();
+        var target = null;
+        for (var i = 0; i < items.length; i++) {
+          var r = items[i].getBoundingClientRect();
+          if (r.bottom > listRect.top + 4) { target = items[i]; break; }
+        }
+        if (target) { show(target); target.focus(); }
       } else if (e.key === 'ArrowLeft' || e.key === 'Backspace') {
         e.preventDefault();
         navigateParent();
