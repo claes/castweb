@@ -50,59 +50,72 @@ func NewServer(root string, ytcastDevice string) nethttp.Handler {
 }
 
 func (s *server) handlePlay(w nethttp.ResponseWriter, r *nethttp.Request) {
-	// Accept POST (htmx) or GET. Expect parameter "id" (YouTube video id).
-	if err := r.ParseForm(); err != nil {
-		log.Printf("/play: parse error: %v", err)
-		httpError(w, nethttp.StatusBadRequest, "invalid form")
-		return
-	}
-	id := r.FormValue("id")
-	if id == "" {
-		id = r.URL.Query().Get("id")
-	}
-	if id == "" {
-		log.Printf("/play: missing id")
-		httpError(w, nethttp.StatusBadRequest, "missing id")
-		return
-	}
-	if s.ytcastDevice == "" {
-		log.Printf("/play: device not configured; set -ytcast or YTCAST_DEVICE")
-		httpError(w, nethttp.StatusBadRequest, "ytcast device not configured")
-		return
-	}
-	// Build URL and execute ytcast
-	ytURL := "https://www.youtube.com/watch?v=" + id
-	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
-	defer cancel()
-	bin, _ := exec.LookPath("ytcast")
-	args := []string{"-d", s.ytcastDevice, ytURL}
-	cmd := exec.CommandContext(ctx, "ytcast", args...)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	// Log full command line with quoting for troubleshooting
-	q := make([]string, 0, len(args))
-	for _, a := range args {
-		q = append(q, fmt.Sprintf("%q", a))
-	}
-	prog := bin
-	if prog == "" {
-		prog = "ytcast"
-	}
-	log.Printf("/play: casting id=%s device=%s", id, s.ytcastDevice)
-	log.Printf("/play: exec %s %s", prog, strings.Join(q, " "))
-	if err := cmd.Run(); err != nil {
-		exitCode := 0
-		if ee, ok := err.(*exec.ExitError); ok && ee.ProcessState != nil {
-			exitCode = ee.ProcessState.ExitCode()
-		}
-		outStr := strings.TrimSpace(stdout.String())
-		errStr := strings.TrimSpace(stderr.String())
-		log.Printf("/play: ytcast failed: err=%v exit=%d\nstdout: %s\nstderr: %s", err, exitCode, outStr, errStr)
-		httpError(w, nethttp.StatusInternalServerError, "failed to cast")
-		return
-	}
-	w.WriteHeader(nethttp.StatusNoContent)
+    // Accept POST (htmx) or GET. Expect parameter "url" (playable URL).
+    if err := r.ParseForm(); err != nil {
+        log.Printf("/play: parse error: %v", err)
+        httpError(w, nethttp.StatusBadRequest, "invalid form")
+        return
+    }
+    u := r.FormValue("url")
+    if u == "" {
+        u = r.URL.Query().Get("url")
+    }
+    if u == "" {
+        log.Printf("/play: missing url")
+        httpError(w, nethttp.StatusBadRequest, "missing url")
+        return
+    }
+    // Only support YouTube URLs for now.
+    parsed, err := url.Parse(u)
+    if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+        log.Printf("/play: invalid url: %q err=%v", u, err)
+        httpError(w, nethttp.StatusBadRequest, "invalid url")
+        return
+    }
+    host := strings.ToLower(parsed.Host)
+    isYouTube := strings.HasSuffix(host, "youtube.com") || strings.HasSuffix(host, "youtu.be")
+    if !isYouTube {
+        log.Printf("/play: unsupported url host: %s", host)
+        httpError(w, nethttp.StatusBadRequest, "unsupported url")
+        return
+    }
+    if s.ytcastDevice == "" {
+        log.Printf("/play: device not configured; set -ytcast or YTCAST_DEVICE")
+        httpError(w, nethttp.StatusBadRequest, "ytcast device not configured")
+        return
+    }
+    // Execute ytcast with the provided URL
+    ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+    defer cancel()
+    bin, _ := exec.LookPath("ytcast")
+    args := []string{"-d", s.ytcastDevice, u}
+    cmd := exec.CommandContext(ctx, "ytcast", args...)
+    var stdout, stderr bytes.Buffer
+    cmd.Stdout = &stdout
+    cmd.Stderr = &stderr
+    // Log full command line with quoting for troubleshooting
+    q := make([]string, 0, len(args))
+    for _, a := range args {
+        q = append(q, fmt.Sprintf("%q", a))
+    }
+    prog := bin
+    if prog == "" {
+        prog = "ytcast"
+    }
+    log.Printf("/play: casting url=%s device=%s", u, s.ytcastDevice)
+    log.Printf("/play: exec %s %s", prog, strings.Join(q, " "))
+    if err := cmd.Run(); err != nil {
+        exitCode := 0
+        if ee, ok := err.(*exec.ExitError); ok && ee.ProcessState != nil {
+            exitCode = ee.ProcessState.ExitCode()
+        }
+        outStr := strings.TrimSpace(stdout.String())
+        errStr := strings.TrimSpace(stderr.String())
+        log.Printf("/play: ytcast failed: err=%v exit=%d\nstdout: %s\nstderr: %s", err, exitCode, outStr, errStr)
+        httpError(w, nethttp.StatusInternalServerError, "failed to cast")
+        return
+    }
+    w.WriteHeader(nethttp.StatusNoContent)
 }
 
 func (s *server) handleBrowse(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -290,7 +303,7 @@ ul{list-style:none;padding:0;margin:0}
               data-tags="{{join .Video.Tags ", "}}"
               data-plot="{{.Video.Plot}}"
               hx-post="/play"
-              hx-vals='{"id":"{{.Video.VideoID}}"}'
+              hx-vals='{"url":"https://www.youtube.com/watch?v={{.Video.VideoID}}"}'
               hx-trigger="click, keyup[key=='Enter']"
               hx-swap="none">
             {{if .Video.ThumbURL}}<img class="thumb" src="{{.Video.ThumbURL}}" alt="thumb">{{end}}
