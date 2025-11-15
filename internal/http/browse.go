@@ -301,9 +301,9 @@ ul{list-style:none;padding:0;margin:0}
       {{if .HasNext}}
         <li class="item" role="option" aria-selected="false" tabindex="0"
             data-kind="nav"
-            data-title="Next item"
+            data-title="Next"
             data-href="{{.NextURL}}">
-          <div class="title">Next item ⟶</div>
+          <div class="title">Next ⟶</div>
         </li>
       {{end}}
       </ul>
