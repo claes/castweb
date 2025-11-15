@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os/exec"
 	stdpath "path"
+	"strconv"
 	"strings"
 	"time"
 
@@ -119,8 +120,76 @@ func (s *server) handleBrowse(w nethttp.ResponseWriter, r *nethttp.Request) {
 		httpError(w, nethttp.StatusNotFound, "unable to read path")
 		return
 	}
+	// Pagination: 100 items per page over listing.Entries
+	const limit = 100
+	page := 1
+	if p := r.URL.Query().Get("page"); p != "" {
+		if n, err := strconv.Atoi(p); err == nil && n > 0 {
+			page = n
+		}
+	}
+	total := len(listing.Entries)
+	start := (page - 1) * limit
+	if start > total {
+		start = total
+	}
+	end := start + limit
+	if end > total {
+		end = total
+	}
+	// slice entries for this page
+	listing.Entries = listing.Entries[start:end]
+
+	// Build prev/next URLs
+	// base path retains the path segment; we only manipulate the page query param
+	base := "/"
+	if rel != "" {
+		// preserve encoding of path segments
+		var parts []string
+		for _, seg := range strings.Split(rel, "/") {
+			if seg == "" {
+				continue
+			}
+			parts = append(parts, url.PathEscape(seg))
+		}
+		base = "/" + strings.Join(parts, "/")
+	}
+	q := r.URL.Query()
+	hasPrev := page > 1
+	hasNext := end < total
+	prevURL := ""
+	nextURL := ""
+	if hasPrev {
+		q.Set("page", strconv.Itoa(page-1))
+		prevURL = base + "?" + q.Encode()
+	}
+	if hasNext {
+		q.Set("page", strconv.Itoa(page+1))
+		nextURL = base + "?" + q.Encode()
+	}
+	data := struct {
+		Listing    interface{}
+		Page       int
+		HasPrev    bool
+		HasNext    bool
+		PrevURL    string
+		NextURL    string
+		Path       string
+		ParentPath string
+		Entries    interface{}
+	}{
+		Listing:    listing,
+		Page:       page,
+		HasPrev:    hasPrev,
+		HasNext:    hasNext,
+		PrevURL:    prevURL,
+		NextURL:    nextURL,
+		Path:       listing.Path,
+		ParentPath: listing.ParentPath,
+		Entries:    listing.Entries,
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = s.tpl.Execute(w, listing)
+	_ = s.tpl.Execute(w, data)
 }
 
 func httpError(w nethttp.ResponseWriter, code int, msg string) {
@@ -169,6 +238,14 @@ ul{list-style:none;padding:0;margin:0}
     </div>
     <div class="panel list" id="list">
       <ul role="listbox" aria-label="Items">
+      {{if .HasPrev}}
+        <li class="item" role="option" aria-selected="false" tabindex="0"
+            data-kind="nav"
+            data-title="Previous"
+            data-href="{{.PrevURL}}">
+          <div class="title">⟵ Previous</div>
+        </li>
+      {{end}}
       {{range .Entries}}
         {{if eq .Kind "dir"}}
           <li class="item" role="option" aria-selected="false" tabindex="0"
@@ -193,6 +270,14 @@ ul{list-style:none;padding:0;margin:0}
             <div class="title">{{if .Video.Title}}{{.Video.Title}}{{else}}{{.Video.Name}}{{end}}</div>
           </li>
         {{end}}
+      {{end}}
+      {{if .HasNext}}
+        <li class="item" role="option" aria-selected="false" tabindex="0"
+            data-kind="nav"
+            data-title="Next item"
+            data-href="{{.NextURL}}">
+          <div class="title">Next item ⟶</div>
+        </li>
       {{end}}
       </ul>
     </div>
@@ -257,8 +342,10 @@ ul{list-style:none;padding:0;margin:0}
       if (tags) html += '<div class="muted" style="margin-top:6px">Tags: ' + esc(tags) + '</div>';
       if (plot) html += '<p style="white-space:pre-wrap">' + esc(plot) + '</p>';
       if (id) html += '<p><a target="_blank" href="https://www.youtube.com/watch?v=' + esc(id) + '">Open on YouTube</a></p>';
-    } else {
+    } else if (kind === 'dir') {
       html += '<p class="muted">Folder. Press Enter or → to open.</p>';
+    } else if (kind === 'nav') {
+      html += '<p class="muted">Navigation. Press Enter to follow.</p>';
     }
     details.innerHTML = html;
   }
@@ -269,6 +356,9 @@ ul{list-style:none;padding:0;margin:0}
       var kind = li.getAttribute('data-kind') || 'video';
       if (kind === 'dir') {
         navigateTo(li.getAttribute('data-path') || '');
+      } else if (kind === 'nav') {
+        var href = li.getAttribute('data-href');
+        if (href) { window.location.href = href; }
       } else {
         show(li); li.focus();
       }
@@ -280,6 +370,7 @@ ul{list-style:none;padding:0;margin:0}
           e.preventDefault();
           var kind = li.getAttribute('data-kind') || 'video';
           if (kind === 'dir') { navigateTo(li.getAttribute('data-path') || ''); }
+          else if (kind === 'nav') { var href = li.getAttribute('data-href'); if (href) { window.location.href = href; } }
           else { show(li); }
         }
       } else if (e.key === 'ArrowLeft' || e.key === 'Backspace') {
