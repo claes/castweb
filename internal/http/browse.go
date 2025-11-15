@@ -204,6 +204,8 @@ const pageTpl = `<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>castweb</title>
 <style>
+/* Ensure padding/borders are included in element width to prevent overflow */
+*, *::before, *::after { box-sizing: border-box }
 body{font-family:system-ui,-apple-system,Segoe UI,Roboto;margin:0;padding:16px 24px}
 header{display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem}
 ul{list-style:none;padding:0;margin:0}
@@ -221,6 +223,31 @@ ul{list-style:none;padding:0;margin:0}
 .title{font-weight:600}
 .details img{max-width:100%;height:auto;border-radius:6px}
 .muted, small{color:#666}
+/* Responsive reflow: on small viewports, stack details above list.
+   In this mode, list uses 75% width and details 25%. */
+@media (max-width: 768px) {
+  html, body{ padding:0; margin:0; overflow-x:hidden; }
+  body{ padding:8px 12px; }
+  header{ margin-bottom: .6rem; }
+  .layout{
+    grid-template-columns: 1fr;
+    grid-template-areas: "list";
+    gap: 8px;
+    width: 100%;
+  }
+  .panel{ padding: 8px; }
+  /* Hide preview on mobile */
+  .details{ display: none; }
+  .list{
+    grid-area: list;
+    width: 100%;
+    max-width: 100%;
+    margin: 0;
+    max-height: none;
+    overflow: auto;
+  }
+  .title{ word-break: break-word; overflow-wrap: anywhere; }
+}
 </style>
 <header>
   <div>
