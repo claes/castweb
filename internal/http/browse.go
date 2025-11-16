@@ -1,26 +1,29 @@
 package http
 
 import (
-	"bytes"
-	"context"
-	"fmt"
-	"html/template"
-	"log"
-	nethttp "net/http"
-	"net/url"
-	"os/exec"
-	stdpath "path"
-	"strconv"
-	"strings"
-	"time"
+    "bytes"
+    "context"
+    "fmt"
+    "html/template"
+    "log"
+    nethttp "net/http"
+    "net/url"
+    "os/exec"
+    stdpath "path"
+    "strconv"
+    "strings"
+    "time"
 
-	"github.com/claes/ytplv/internal/browse"
+    "github.com/claes/ytplv/internal/browse"
+    "sync"
 )
 
 type server struct {
-	root         string
-	tpl          *template.Template
-	ytcastDevice string
+    root         string
+    tpl          *template.Template
+    ytcastDevice string
+    ytcastCode   string
+    mu           sync.RWMutex
 }
 
 // NewServer creates an HTTP handler for browsing video metadata rooted at dir.
@@ -41,14 +44,17 @@ func NewServer(root string, ytcastDevice string) nethttp.Handler {
             return a + "/" + b
         },
     }).Parse(pageTpl))
-	s := &server{root: root, tpl: tpl, ytcastDevice: ytcastDevice}
-	mux := nethttp.NewServeMux()
-	mux.HandleFunc("/", s.handleBrowse)
-	mux.HandleFunc("/health", func(w nethttp.ResponseWriter, r *nethttp.Request) {
-		HealthHandler().ServeHTTP(w, r)
-	})
-	mux.HandleFunc("/play", s.handlePlay)
-	return mux
+    s := &server{root: root, tpl: tpl, ytcastDevice: ytcastDevice}
+    mux := nethttp.NewServeMux()
+    mux.HandleFunc("/", s.handleBrowse)
+    mux.HandleFunc("/health", func(w nethttp.ResponseWriter, r *nethttp.Request) {
+        HealthHandler().ServeHTTP(w, r)
+    })
+    mux.HandleFunc("/play", s.handlePlay)
+    mux.HandleFunc("/ytcast/pair", s.handleYtcastPair)
+    mux.HandleFunc("/ytcast/set-code", s.handleYtcastSetCode)
+    mux.HandleFunc("/ytcast/list", s.handleYtcastList)
+    return mux
 }
 
 func (s *server) handlePlay(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -81,17 +87,18 @@ func (s *server) handlePlay(w nethttp.ResponseWriter, r *nethttp.Request) {
 		httpError(w, nethttp.StatusBadRequest, "unsupported url")
 		return
 	}
-	if s.ytcastDevice == "" {
-		log.Printf("/play: device not configured; set -ytcast or YTCAST_DEVICE")
-		httpError(w, nethttp.StatusBadRequest, "ytcast device not configured")
-		return
-	}
-	// Execute ytcast with the provided URL
-	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
-	defer cancel()
-	bin, _ := exec.LookPath("ytcast")
-	args := []string{"-d", s.ytcastDevice, u}
-	cmd := exec.CommandContext(ctx, "ytcast", args...)
+    device := s.getYtcastDevice()
+    if device == "" {
+        log.Printf("/play: device not configured; set -ytcast, YTCAST_DEVICE, or /ytcast-set-code")
+        httpError(w, nethttp.StatusBadRequest, "ytcast device not configured")
+        return
+    }
+    // Execute ytcast with the provided URL
+    ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+    defer cancel()
+    bin, _ := exec.LookPath("ytcast")
+    args := []string{"-d", device, u}
+    cmd := exec.CommandContext(ctx, "ytcast", args...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -104,8 +111,8 @@ func (s *server) handlePlay(w nethttp.ResponseWriter, r *nethttp.Request) {
 	if prog == "" {
 		prog = "ytcast"
 	}
-	log.Printf("/play: casting url=%s device=%s", u, s.ytcastDevice)
-	log.Printf("/play: exec %s %s", prog, strings.Join(q, " "))
+    log.Printf("/play: casting url=%s device=%s", u, device)
+    log.Printf("/play: exec %s %s", prog, strings.Join(q, " "))
 	if err := cmd.Run(); err != nil {
 		exitCode := 0
 		if ee, ok := err.(*exec.ExitError); ok && ee.ProcessState != nil {
@@ -233,9 +240,103 @@ func (s *server) handleBrowse(w nethttp.ResponseWriter, r *nethttp.Request) {
 }
 
 func httpError(w nethttp.ResponseWriter, code int, msg string) {
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.WriteHeader(code)
-	_, _ = w.Write([]byte(msg))
+    w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+    w.WriteHeader(code)
+    _, _ = w.Write([]byte(msg))
+}
+
+// getYtcastDevice returns the active device to pass to ytcast -d.
+// If a code has been set via /ytcast-set-code, that takes precedence;
+// otherwise the configured ytcastDevice from startup is used.
+func (s *server) getYtcastDevice() string {
+    s.mu.RLock()
+    defer s.mu.RUnlock()
+    if s.ytcastCode != "" {
+        return s.ytcastCode
+    }
+    return s.ytcastDevice
+}
+
+// handleYtcastPair validates a 12-digit pairing code and invokes
+// `ytcast -pair <code>`. Returns 204 on success, 400 on validation error,
+// and 500 on execution failure.
+func (s *server) handleYtcastPair(w nethttp.ResponseWriter, r *nethttp.Request) {
+    code := r.URL.Query().Get("code")
+    if code == "" {
+        httpError(w, nethttp.StatusBadRequest, "missing code")
+        return
+    }
+    if len(code) != 12 {
+        httpError(w, nethttp.StatusBadRequest, "code must be 12 digits")
+        return
+    }
+    for i := 0; i < len(code); i++ {
+        if code[i] < '0' || code[i] > '9' {
+            httpError(w, nethttp.StatusBadRequest, "code must be 12 digits")
+            return
+        }
+    }
+    ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+    defer cancel()
+    // Run: ytcast -pair <code>
+    cmd := exec.CommandContext(ctx, "ytcast", "-pair", code)
+    var stdout, stderr bytes.Buffer
+    cmd.Stdout = &stdout
+    cmd.Stderr = &stderr
+    if err := cmd.Run(); err != nil {
+        outStr := strings.TrimSpace(stdout.String())
+        errStr := strings.TrimSpace(stderr.String())
+        log.Printf("/ytcast-pair: ytcast failed: err=%v\nstdout: %s\nstderr: %s", err, outStr, errStr)
+        httpError(w, nethttp.StatusInternalServerError, "failed to pair")
+        return
+    }
+    w.WriteHeader(nethttp.StatusNoContent)
+}
+
+// handleYtcastList invokes `ytcast -l` and writes its stdout as text/plain.
+// Returns 200 on success, 500 on failure.
+func (s *server) handleYtcastList(w nethttp.ResponseWriter, r *nethttp.Request) {
+    ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+    defer cancel()
+    cmd := exec.CommandContext(ctx, "ytcast", "-l")
+    var stdout, stderr bytes.Buffer
+    cmd.Stdout = &stdout
+    cmd.Stderr = &stderr
+    if err := cmd.Run(); err != nil {
+        outStr := strings.TrimSpace(stdout.String())
+        errStr := strings.TrimSpace(stderr.String())
+        log.Printf("/ytcast-list: ytcast failed: err=%v\nstdout: %s\nstderr: %s", err, outStr, errStr)
+        httpError(w, nethttp.StatusInternalServerError, "failed to list devices")
+        return
+    }
+    w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+    w.WriteHeader(nethttp.StatusOK)
+    _, _ = w.Write(stdout.Bytes())
+}
+
+// handleYtcastSetCode stores a 12-digit code to be used as the device
+// argument for subsequent `ytcast -d` calls (e.g., in /play).
+// Returns 204 on success, 400 for invalid input.
+func (s *server) handleYtcastSetCode(w nethttp.ResponseWriter, r *nethttp.Request) {
+    code := r.URL.Query().Get("code")
+    if code == "" {
+        httpError(w, nethttp.StatusBadRequest, "missing code")
+        return
+    }
+    if len(code) != 12 {
+        httpError(w, nethttp.StatusBadRequest, "code must be 12 digits")
+        return
+    }
+    for i := 0; i < len(code); i++ {
+        if code[i] < '0' || code[i] > '9' {
+            httpError(w, nethttp.StatusBadRequest, "code must be 12 digits")
+            return
+        }
+    }
+    s.mu.Lock()
+    s.ytcastCode = code
+    s.mu.Unlock()
+    w.WriteHeader(nethttp.StatusNoContent)
 }
 
 const pageTpl = `<!doctype html>
