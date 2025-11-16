@@ -246,6 +246,7 @@ const pageTpl = `<!doctype html>
 <style>
 /* Ensure padding/borders are included in element width to prevent overflow */
 *, *::before, *::after { box-sizing: border-box }
+html, body { height: 100%; }
 /* Theme variables */
 :root{
   --bg: #ffffff;
@@ -294,36 +295,45 @@ const pageTpl = `<!doctype html>
   --link-hover: #a6c8ff;
 }
 body{font-family:system-ui,-apple-system,Segoe UI,Roboto;margin:0;padding:16px 24px;background:var(--bg);color:var(--text)}
-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem}
+body{display:flex;flex-direction:column;min-height:100vh}
+body{font-size:19px}
+header{display:flex;justify-content:space-between;align-items:center;margin-bottom:0.6rem}
 header .left{display:flex;gap:8px;align-items:center}
-header .up-link{display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--border);border-radius:6px;padding:2px 6px;color:var(--link);text-decoration:none}
+header .up-link{display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--border);border-radius:6px;padding:4px 8px;color:var(--link);text-decoration:none}
 header .up-link:hover, header .up-link:focus{color:var(--link-hover);background:var(--hover)}
 header a{ color: var(--link); text-decoration: none; }
 header a:hover, header a:focus{ color: var(--link-hover); text-decoration: underline; }
 ul{list-style:none;padding:0;margin:0}
-.layout{display:grid;grid-template-columns:1fr;gap:24px;align-items:start}
-.panel{border:1px solid var(--border);border-radius:8px;padding:12px;background:var(--panel-bg)}
-.list{max-height:calc(100vh - 180px);overflow:auto}
+.layout{display:grid;grid-template-columns:1fr;gap:26px;align-items:start}
+.layout{flex:1 1 auto;min-height:0}
+.layout{grid-auto-rows:1fr}
+.layout > * { min-height: 0; }
+.layout, section { width: 100%; }
+section { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
+.panel{border:1px solid var(--border);border-radius:8px;padding:14px;background:var(--panel-bg)}
+.list{height:100%;overflow:auto}
 .dirs .dir-item{padding:6px;border-radius:6px;cursor:pointer;margin-bottom:4px}
 .dirs .dir-item:hover{background:var(--hover)}
 .dirs .dir-item.active{background:var(--active)}
-.list .item{display:flex;gap:10px;align-items:center;padding:8px;border-radius:6px;cursor:pointer}
+.list .item{display:flex;gap:12px;align-items:center;padding:10px;border-radius:6px;cursor:pointer;font-size:1.2rem}
 .list .item:hover{background:var(--hover)}
 .list .item.active{background:var(--active)}
-.thumb{width:96px;height:72px;object-fit:cover;border-radius:4px;flex:0 0 auto}
-.title{font-weight:600}
+.thumb{width:112px;height:84px;object-fit:cover;border-radius:4px;flex:0 0 auto}
+.title{font-weight:600;font-size:1.3rem}
+ h2{font-size:1.5rem}
 .details img{max-width:100%;height:auto;border-radius:6px}
 .muted, small{color:var(--muted)}
 /* Top actions */
 .header-actions{display:flex;gap:10px;align-items:center}
-.theme-toggle{border:1px solid var(--border);background:transparent;color:var(--text);padding:4px 8px;border-radius:16px;cursor:pointer}
+.theme-toggle{border:1px solid var(--border);background:transparent;color:var(--text);padding:6px 12px;border-radius:16px;cursor:pointer}
 .theme-toggle:focus{outline:2px solid var(--active)}
 /* Modal overlay */
 .overlay-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.5);display:none;align-items:center;justify-content:center;}
 .overlay-backdrop[aria-hidden="false"]{display:flex}
-.overlay{background:var(--panel-bg);border:1px solid var(--border);border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,.25);max-width:90vw;max-height:90vh;width:90vw;padding:16px;overflow:auto;color:var(--text)}
+.overlay{background:var(--panel-bg);border:1px solid var(--border);border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,.25);max-width:90vw;max-height:90vh;width:90vw;padding:18px;overflow:auto;color:var(--text);font-size:1.2rem}
 .overlay header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
-.overlay .actions{display:flex;gap:8px;margin-top:12px}
+.overlay .actions{display:flex;gap:10px;margin-top:12px}
+.overlay .actions button{padding:6px 12px;font-size:1.15rem}
 /* Responsive reflow: on small viewports, stack details above list.
    In this mode, list uses 75% width and details 25%. */
 @media (max-width: 768px) {
@@ -636,13 +646,18 @@ ul{list-style:none;padding:0;margin:0}
   if (overlayBackdrop) overlayBackdrop.addEventListener('click', function(e){
     if (e.target === overlayBackdrop) closeOverlay();
   });
+  // Robust cancel via event delegation in case content re-renders
+  if (overlay) overlay.addEventListener('click', function(e){
+    var t = e.target;
+    if (t && t.id === 'overlay-cancel') { e.preventDefault(); closeOverlay(); }
+  });
   if (overlay) overlay.addEventListener('keydown', function(e){
     // Close on Escape
-    if (e.key === 'Escape') { e.preventDefault(); closeOverlay(); return; }
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeOverlay(); return; }
     // Activate Play on Enter/Space
     if (e.key === 'Enter' || e.key === ' ') {
       var active = document.activeElement;
-      if (active && active.tagName === 'BUTTON') { e.preventDefault(); active.click(); return; }
+      if (active && active.tagName === 'BUTTON') { e.preventDefault(); e.stopPropagation(); active.click(); return; }
     }
     // Move focus among all action buttons with Left/Right
     if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
@@ -652,7 +667,7 @@ ul{list-style:none;padding:0;margin:0}
       var cancelBtn = document.getElementById('overlay-cancel');
       var buttons = [prevBtn, nextBtn, playBtn, cancelBtn].filter(function(b){ return !!b && !b.disabled; });
       if (buttons.length) {
-        e.preventDefault();
+        e.preventDefault(); e.stopPropagation();
         var active = document.activeElement;
         var idx = Math.max(0, buttons.indexOf(active));
         if (e.key === 'ArrowRight') idx = Math.min(buttons.length - 1, idx + 1);
@@ -669,10 +684,10 @@ ul{list-style:none;padding:0;margin:0}
     var idx = items.indexOf(current);
     if (idx === -1) idx = 0;
     var next = null;
-    if (e.key === 'ArrowDown') { e.preventDefault(); if (idx < items.length - 1) next = items[idx+1]; }
-    else if (e.key === 'ArrowUp') { e.preventDefault(); if (idx > 0) next = items[idx-1]; }
-    else if (e.key === 'PageDown') { e.preventDefault(); next = items[Math.min(items.length - 1, idx + 10)]; }
-    else if (e.key === 'PageUp') { e.preventDefault(); next = items[Math.max(0, idx - 10)]; }
+    if (e.key === 'ArrowDown') { e.preventDefault(); e.stopPropagation(); if (idx < items.length - 1) next = items[idx+1]; }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); e.stopPropagation(); if (idx > 0) next = items[idx-1]; }
+    else if (e.key === 'PageDown') { e.preventDefault(); e.stopPropagation(); next = items[Math.min(items.length - 1, idx + 10)]; }
+    else if (e.key === 'PageUp') { e.preventDefault(); e.stopPropagation(); next = items[Math.max(0, idx - 10)]; }
     if (next) {
       // Preserve which action button was focused
       var active = document.activeElement;
@@ -745,6 +760,47 @@ ul{list-style:none;padding:0;margin:0}
       }
     });
   }
+  // Global keyboard navigation: when focus is outside the list and overlay is closed,
+  // navigation keys operate on the current selection and restore focus.
+  document.addEventListener('keydown', function(e){
+    if (e.defaultPrevented) return; // handled elsewhere (e.g., overlay)
+    var overlayOpen = overlayBackdrop && overlayBackdrop.getAttribute('aria-hidden') === 'false';
+    if (overlayOpen) return; // overlay has its own key handling
+    if (!list) return;
+    if (list.contains(e.target)) return; // list handler will take over
+    var keys = ['ArrowDown','ArrowUp','PageDown','PageUp','Home','End','Enter',' ','ArrowLeft','ArrowRight','Backspace'];
+    if (keys.indexOf(e.key) === -1) return;
+    var items = Array.prototype.slice.call(list.querySelectorAll('.item'));
+    if (!items.length) return;
+    var current = list.querySelector('.item.active') || items[0];
+    var idx = items.indexOf(current);
+    if (idx === -1) idx = 0;
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      show(current); centerInList(current); current.focus(); openOverlayFor(current, 'play');
+      return;
+    }
+    if (e.key === 'ArrowLeft' || e.key === 'Backspace') {
+      e.preventDefault(); navigateParent(); return;
+    }
+    if (e.key === 'ArrowRight') {
+      var kind = current.getAttribute('data-kind') || 'video';
+      if (kind === 'dir') { e.preventDefault(); navigateTo(current.getAttribute('data-path') || ''); }
+      return;
+    }
+    var nextIdx = idx;
+    if (e.key === 'ArrowDown') nextIdx = Math.min(items.length - 1, idx + 1);
+    else if (e.key === 'ArrowUp') nextIdx = Math.max(0, idx - 1);
+    else if (e.key === 'PageDown') nextIdx = Math.min(items.length - 1, idx + 10);
+    else if (e.key === 'PageUp') nextIdx = Math.max(0, idx - 10);
+    else if (e.key === 'Home') nextIdx = 0;
+    else if (e.key === 'End') nextIdx = items.length - 1;
+    if (nextIdx !== idx) {
+      e.preventDefault();
+      var next = items[nextIdx];
+      show(next); centerInList(next); next.focus();
+    }
+  });
   // Auto-select first item
   if (list) {
     var first = list.querySelector('.item');
