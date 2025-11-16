@@ -263,15 +263,18 @@ func (s *server) getYtcastDevice() string {
 func (s *server) handleYtcastPair(w nethttp.ResponseWriter, r *nethttp.Request) {
     code := r.URL.Query().Get("code")
     if code == "" {
+        log.Printf("/ytcast-pair: missing code")
         httpError(w, nethttp.StatusBadRequest, "missing code")
         return
     }
     if len(code) != 12 {
+        log.Printf("/ytcast-pair: invalid code length: %q", code)
         httpError(w, nethttp.StatusBadRequest, "code must be 12 digits")
         return
     }
     for i := 0; i < len(code); i++ {
         if code[i] < '0' || code[i] > '9' {
+            log.Printf("/ytcast-pair: non-digit in code: %q", code)
             httpError(w, nethttp.StatusBadRequest, "code must be 12 digits")
             return
         }
@@ -283,6 +286,7 @@ func (s *server) handleYtcastPair(w nethttp.ResponseWriter, r *nethttp.Request) 
     var stdout, stderr bytes.Buffer
     cmd.Stdout = &stdout
     cmd.Stderr = &stderr
+    log.Printf("/ytcast-pair: exec ytcast -pair %q", code)
     if err := cmd.Run(); err != nil {
         outStr := strings.TrimSpace(stdout.String())
         errStr := strings.TrimSpace(stderr.String())
@@ -290,6 +294,7 @@ func (s *server) handleYtcastPair(w nethttp.ResponseWriter, r *nethttp.Request) 
         httpError(w, nethttp.StatusInternalServerError, "failed to pair")
         return
     }
+    log.Printf("/ytcast-pair: success for code=%q", code)
     w.WriteHeader(nethttp.StatusNoContent)
 }
 
@@ -302,6 +307,7 @@ func (s *server) handleYtcastList(w nethttp.ResponseWriter, r *nethttp.Request) 
     var stdout, stderr bytes.Buffer
     cmd.Stdout = &stdout
     cmd.Stderr = &stderr
+    log.Printf("/ytcast-list: exec ytcast -l")
     if err := cmd.Run(); err != nil {
         outStr := strings.TrimSpace(stdout.String())
         errStr := strings.TrimSpace(stderr.String())
@@ -309,33 +315,26 @@ func (s *server) handleYtcastList(w nethttp.ResponseWriter, r *nethttp.Request) 
         httpError(w, nethttp.StatusInternalServerError, "failed to list devices")
         return
     }
+    log.Printf("/ytcast-list: success; bytes=%d", stdout.Len())
     w.Header().Set("Content-Type", "text/plain; charset=utf-8")
     w.WriteHeader(nethttp.StatusOK)
     _, _ = w.Write(stdout.Bytes())
 }
 
-// handleYtcastSetCode stores a 12-digit code to be used as the device
+// handleYtcastSetCode stores a code (as-is) to be used as the device
 // argument for subsequent `ytcast -d` calls (e.g., in /play).
-// Returns 204 on success, 400 for invalid input.
+// Returns 204 on success, 400 when missing the code parameter.
 func (s *server) handleYtcastSetCode(w nethttp.ResponseWriter, r *nethttp.Request) {
     code := r.URL.Query().Get("code")
     if code == "" {
+        log.Printf("/ytcast-set-code: missing code")
         httpError(w, nethttp.StatusBadRequest, "missing code")
         return
-    }
-    if len(code) != 12 {
-        httpError(w, nethttp.StatusBadRequest, "code must be 12 digits")
-        return
-    }
-    for i := 0; i < len(code); i++ {
-        if code[i] < '0' || code[i] > '9' {
-            httpError(w, nethttp.StatusBadRequest, "code must be 12 digits")
-            return
-        }
     }
     s.mu.Lock()
     s.ytcastCode = code
     s.mu.Unlock()
+    log.Printf("/ytcast-set-code: set code to %q", code)
     w.WriteHeader(nethttp.StatusNoContent)
 }
 

@@ -49,12 +49,12 @@ func TestYtcastSetCode_Validation(t *testing.T) {
     if rr.Code != 400 {
         t.Fatalf("expected 400, got %d", rr.Code)
     }
-    // invalid
+    // arbitrary non-empty code is allowed
     rr = httptest.NewRecorder()
     req = httptest.NewRequest("GET", "/ytcast/set-code?code=abc", nil)
     mux.ServeHTTP(rr, req)
-    if rr.Code != 400 {
-        t.Fatalf("expected 400, got %d", rr.Code)
+    if rr.Code != 204 {
+        t.Fatalf("expected 204 for arbitrary code, got %d; body=%s", rr.Code, rr.Body.String())
     }
 }
 
