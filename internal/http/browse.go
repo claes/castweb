@@ -192,6 +192,7 @@ func (s *server) handleBrowse(w nethttp.ResponseWriter, r *nethttp.Request) {
 		Path       string
 		ParentPath string
 		Entries    interface{}
+		Breadcrumbs interface{}
 	}{
 		Listing:    listing,
 		Page:       page,
@@ -202,6 +203,30 @@ func (s *server) handleBrowse(w nethttp.ResponseWriter, r *nethttp.Request) {
 		Path:       listing.Path,
 		ParentPath: listing.ParentPath,
 		Entries:    listing.Entries,
+	}
+	// Build breadcrumb trail: Root + each path segment
+	{
+		// crumb element type: Name, Href, Current
+		type crumb struct{ Name, Href string; Current bool }
+		var crumbs []crumb
+		// Root crumb
+		if listing.Path == "" {
+			crumbs = append(crumbs, crumb{Name: "Root", Href: "/", Current: true})
+		} else {
+			crumbs = append(crumbs, crumb{Name: "Root", Href: "/", Current: false})
+			parts := strings.Split(listing.Path, "/")
+			var acc string
+			for i, seg := range parts {
+				if seg == "" { continue }
+				if acc == "" {
+					acc = "/" + url.PathEscape(seg)
+				} else {
+					acc = acc + "/" + url.PathEscape(seg)
+				}
+				crumbs = append(crumbs, crumb{Name: seg, Href: acc, Current: i == len(parts)-1})
+			}
+		}
+		data.Breadcrumbs = crumbs
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = s.tpl.Execute(w, data)
@@ -221,27 +246,83 @@ const pageTpl = `<!doctype html>
 <style>
 /* Ensure padding/borders are included in element width to prevent overflow */
 *, *::before, *::after { box-sizing: border-box }
-body{font-family:system-ui,-apple-system,Segoe UI,Roboto;margin:0;padding:16px 24px}
+/* Theme variables */
+:root{
+  --bg: #ffffff;
+  --text: #111111;
+  --panel-bg: #ffffff;
+  --border: #dddddd;
+  --muted: #666666;
+  --hover: #f6f6f6;
+  --active: #eef5ff;
+  --link: #0a53c6;
+  --link-hover: #0842a3;
+}
+@media (prefers-color-scheme: dark) {
+  :root{
+    --bg: #0f1115;
+    --text: #e6e6e6;
+    --panel-bg: #161a20;
+    --border: #2a2f3a;
+    --muted: #9aa4b2;
+    --hover: #1f2430;
+    --active: #223049;
+    --link: #8ab4ff;
+    --link-hover: #a6c8ff;
+  }
+}
+:root[data-theme='light']{
+  --bg: #ffffff;
+  --text: #111111;
+  --panel-bg: #ffffff;
+  --border: #dddddd;
+  --muted: #666666;
+  --hover: #f6f6f6;
+  --active: #eef5ff;
+  --link: #0a53c6;
+  --link-hover: #0842a3;
+}
+:root[data-theme='dark']{
+  --bg: #0f1115;
+  --text: #e6e6e6;
+  --panel-bg: #161a20;
+  --border: #2a2f3a;
+  --muted: #9aa4b2;
+  --hover: #1f2430;
+  --active: #223049;
+  --link: #8ab4ff;
+  --link-hover: #a6c8ff;
+}
+body{font-family:system-ui,-apple-system,Segoe UI,Roboto;margin:0;padding:16px 24px;background:var(--bg);color:var(--text)}
 header{display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem}
+header .left{display:flex;gap:8px;align-items:center}
+header .up-link{display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--border);border-radius:6px;padding:2px 6px;color:var(--link);text-decoration:none}
+header .up-link:hover, header .up-link:focus{color:var(--link-hover);background:var(--hover)}
+header a{ color: var(--link); text-decoration: none; }
+header a:hover, header a:focus{ color: var(--link-hover); text-decoration: underline; }
 ul{list-style:none;padding:0;margin:0}
 .layout{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px;align-items:start}
-.panel{border:1px solid #ddd;border-radius:8px;padding:12px}
+.panel{border:1px solid var(--border);border-radius:8px;padding:12px;background:var(--panel-bg)}
 .details{position:sticky;top:12px;align-self:start}
 .list{max-height:calc(100vh - 180px);overflow:auto}
 .dirs .dir-item{padding:6px;border-radius:6px;cursor:pointer;margin-bottom:4px}
-.dirs .dir-item:hover{background:#f6f6f6}
-.dirs .dir-item.active{background:#eef5ff}
+.dirs .dir-item:hover{background:var(--hover)}
+.dirs .dir-item.active{background:var(--active)}
 .list .item{display:flex;gap:10px;align-items:center;padding:8px;border-radius:6px;cursor:pointer}
-.list .item:hover{background:#f6f6f6}
-.list .item.active{background:#eef5ff}
+.list .item:hover{background:var(--hover)}
+.list .item.active{background:var(--active)}
 .thumb{width:96px;height:72px;object-fit:cover;border-radius:4px;flex:0 0 auto}
 .title{font-weight:600}
 .details img{max-width:100%;height:auto;border-radius:6px}
-.muted, small{color:#666}
+.muted, small{color:var(--muted)}
+/* Top actions */
+.header-actions{display:flex;gap:10px;align-items:center}
+.theme-toggle{border:1px solid var(--border);background:transparent;color:var(--text);padding:4px 8px;border-radius:16px;cursor:pointer}
+.theme-toggle:focus{outline:2px solid var(--active)}
 /* Modal overlay */
 .overlay-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.5);display:none;align-items:center;justify-content:center;}
 .overlay-backdrop[aria-hidden="false"]{display:flex}
-.overlay{background:#fff;border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,.25);max-width:90vw;max-height:90vh;width:90vw;padding:16px;overflow:auto}
+.overlay{background:var(--panel-bg);border:1px solid var(--border);border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,.25);max-width:90vw;max-height:90vh;width:90vw;padding:16px;overflow:auto;color:var(--text)}
 .overlay header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
 .overlay .actions{display:flex;gap:8px;margin-top:12px}
 /* Responsive reflow: on small viewports, stack details above list.
@@ -271,11 +352,19 @@ ul{list-style:none;padding:0;margin:0}
 }
 </style>
 <header>
-  <div>
-    {{if ne .Path ""}}<a href="/{{.ParentPath}}">⬅ Up</a>{{end}}
-    <strong style="margin-left:8px">/{{.Path}}</strong>
+  <div class="left">
+    {{if ne .Path ""}}<a class="up-link" href="/{{.ParentPath}}" aria-label="Up one level" title="Up one level">⬆</a>{{end}}
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      {{$n := len .Breadcrumbs}}
+      {{range $i, $c := .Breadcrumbs}}
+        {{if gt $i 0}}<span class="muted"> / </span>{{end}}
+        {{if $c.Current}}<strong>{{$c.Name}}</strong>{{else}}<a href="{{$c.Href}}">{{$c.Name}}</a>{{end}}
+      {{end}}
+    </nav>
   </div>
-  <a href="/">Root</a>
+  <div class="header-actions">
+    <button id="theme-toggle" class="theme-toggle" type="button" aria-pressed="false" title="Toggle theme">🌓</button>
+  </div>
 </header>
 
 <section>
@@ -351,6 +440,41 @@ ul{list-style:none;padding:0;margin:0}
 <script src="https://unpkg.com/htmx.org@1.9.12"></script>
 <script>
 (function(){
+  // Theme handling: default to system; allow user override via toggle
+  var root = document.documentElement;
+  var media = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)');
+  function applyStoredTheme(){
+    var t = localStorage.getItem('theme'); // 'light' | 'dark' | null
+    if (t === 'light' || t === 'dark') { root.setAttribute('data-theme', t); }
+    else { root.removeAttribute('data-theme'); }
+    updateToggleAria();
+  }
+  function currentIsDark(){
+    var t = root.getAttribute('data-theme');
+    if (t === 'dark') return true;
+    if (t === 'light') return false;
+    return !!(media && media.matches);
+  }
+  function updateToggleAria(){
+    var btn = document.getElementById('theme-toggle');
+    if (!btn) return;
+    btn.setAttribute('aria-pressed', currentIsDark() ? 'true' : 'false');
+  }
+  function toggleTheme(){
+    var explicit = root.getAttribute('data-theme');
+    var next;
+    if (explicit === 'dark') next = 'light';
+    else if (explicit === 'light') next = 'dark';
+    else next = currentIsDark() ? 'light' : 'dark';
+    root.setAttribute('data-theme', next);
+    try { localStorage.setItem('theme', next); } catch (e) {}
+    updateToggleAria();
+  }
+  applyStoredTheme();
+  if (media && media.addEventListener) media.addEventListener('change', applyStoredTheme);
+  var themeBtn = document.getElementById('theme-toggle');
+  if (themeBtn) themeBtn.addEventListener('click', toggleTheme);
+
   var currentPath = {{printf "%q" .Path}};
   var parentPath = {{printf "%q" .ParentPath}};
   var details = document.getElementById('details');
