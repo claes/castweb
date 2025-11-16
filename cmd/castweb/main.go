@@ -1,16 +1,16 @@
 package main
 
 import (
-	"context"
-	"flag"
-	"log"
-	nethttp "net/http"
-	"os"
-	"os/signal"
-	"syscall"
-	"time"
+    "context"
+    "flag"
+    "log/slog"
+    nethttp "net/http"
+    "os"
+    "os/signal"
+    "syscall"
+    "time"
 
-	apphttp "github.com/claes/ytplv/internal/http"
+    apphttp "github.com/claes/ytplv/internal/http"
 )
 
 func getenv(key, def string) string {
@@ -21,12 +21,17 @@ func getenv(key, def string) string {
 }
 
 func main() {
-	// Flags
-	var root string
-	var ytcastDevice string
-	var port string
+    // Configure structured logging to stderr
+    slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{})))
+
+    // Flags
+    var root string
+    var ytcastDevice string
+    var port string
+    var statePath string
 	flag.StringVar(&root, "root", "", "root directory containing .strm/.nfo hierarchy (required)")
-	flag.StringVar(&ytcastDevice, "ytcast", "", "ytcast device id to cast to (optional)")
+    flag.StringVar(&ytcastDevice, "ytcast", "", "ytcast device id to cast to (optional)")
+    flag.StringVar(&statePath, "state", "/var/lib/castweb", "directory for persistent state (state.json)")
 	flag.StringVar(&port, "port", "", "port to listen on (required or set PORT env)")
 	flag.Parse()
 	if root == "" {
@@ -42,14 +47,16 @@ func main() {
 	if port == "" {
 		port = "8080"
 	}
-	if root == "" {
-		log.Fatal("missing root directory: pass -root PATH or positional PATH")
-	}
-	if fi, err := os.Stat(root); err != nil || !fi.IsDir() {
-		log.Fatalf("invalid root directory: %s", root)
-	}
+    if root == "" {
+        slog.Error("missing root directory", "hint", "pass -root PATH or positional PATH")
+        os.Exit(1)
+    }
+    if fi, err := os.Stat(root); err != nil || !fi.IsDir() {
+        slog.Error("invalid root directory", "root", root, "err", err)
+        os.Exit(1)
+    }
 
-	mux := apphttp.NewServer(root, ytcastDevice)
+	mux := apphttp.NewServer(root, ytcastDevice, statePath)
 
 	addr := ":" + port
 
@@ -66,21 +73,22 @@ func main() {
 	done := make(chan os.Signal, 1)
 	signal.Notify(done, syscall.SIGINT, syscall.SIGTERM)
 
-	go func() {
-		log.Printf("server listening on :%s", port)
-		if err := srv.ListenAndServe(); err != nil && err != nethttp.ErrServerClosed {
-			log.Fatalf("listen: %v", err)
-		}
-	}()
+    go func() {
+        slog.Info("server listening", "addr", addr)
+        if err := srv.ListenAndServe(); err != nil && err != nethttp.ErrServerClosed {
+            slog.Error("listen failed", "err", err)
+            os.Exit(1)
+        }
+    }()
 
-	<-done
-	log.Println("shutdown signal received")
+    <-done
+    slog.Info("shutdown signal received")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if err := srv.Shutdown(ctx); err != nil {
-		log.Printf("graceful shutdown failed: %v", err)
-		_ = srv.Close()
-	}
-	log.Println("server stopped")
+    ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+    defer cancel()
+    if err := srv.Shutdown(ctx); err != nil {
+        slog.Warn("graceful shutdown failed", "err", err)
+        _ = srv.Close()
+    }
+    slog.Info("server stopped")
 }

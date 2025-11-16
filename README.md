@@ -22,6 +22,9 @@ Running the server
 
 - Build: `go build -o bin/castweb ./cmd/castweb`
 - Run: `bin/castweb -root ./testdata -ytcast 12345678 -port 8080`
+  - Optional: set persistent state directory with `-state /var/lib/castweb` (default).
+    The server stores state in `<state>/state.json`, including the active ytcast
+    device code set via `/ytcast/set-code`.
                                                       
 When you click a video item or press Enter on it, the server executes:
 
@@ -30,3 +33,13 @@ When you click a video item or press Enter on it, the server executes:
 Example:
 
     ytcast -d 12345678 'https://www.youtube.com/watch?v=6Td8dTnElAU'
+
+Persistence
+
+- The server persists the selected ytcast device code to a JSON state file
+  named `state.json` under the state directory.
+  - Default directory: `/var/lib/castweb` (override with `-state`).
+  - If running without permissions to write there, pick a user-writable directory
+    (e.g. `$XDG_STATE_HOME/castweb`).
+  - On startup, the server creates `<state>/state.json` if missing and loads any
+    existing code; if empty and `-ytcast` is provided, it seeds the file.
