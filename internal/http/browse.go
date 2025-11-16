@@ -488,6 +488,47 @@ ul{list-style:none;padding:0;margin:0}
       .replace(/"/g,'&quot;')
       .replace(/'/g,'&#39;');
   }
+  // Shared metadata helpers for details and overlay
+  function getMeta(li){
+    var title = li.getAttribute('data-title') || '';
+    var id = li.getAttribute('data-id') || '';
+    var url = id ? ('https://www.youtube.com/watch?v=' + id) : '';
+    var thumb = li.getAttribute('data-thumb') || '';
+    var tags = li.getAttribute('data-tags') || '';
+    var plot = li.getAttribute('data-plot') || '';
+    var date = li.getAttribute('data-date') || '';
+    return { title: title, id: id, url: url, thumb: thumb, tags: tags, plot: plot, date: date };
+  }
+  function buildMetaHTML(meta, opts){
+    opts = opts || {};
+    var includeTitle = !!opts.includeTitle;
+    var includeActions = !!opts.includeActions;
+    var includeCancel = !!opts.includeCancel;
+    var playId = opts.playId || '';
+    var cancelId = opts.cancelId || '';
+    var html = '';
+    if (includeTitle) {
+      html += '<h2 style="margin-top:0">' + esc(meta.title || '') + '</h2>';
+    }
+    if (meta.thumb) html += '<img src="' + esc(meta.thumb) + '" alt="thumb" style="max-width:100%;height:auto;border-radius:6px" />';
+    if (includeActions) {
+      var vals = esc(JSON.stringify({url: meta.url || ''}));
+      html += '<div class="actions">' +
+              '<button ' + (playId ? ('id="' + esc(playId) + '" ') : '') + 'type="button" hx-post="/play" hx-vals="' + vals + '" hx-trigger="click" hx-swap="none">Play</button>' +
+              (includeCancel ? ('<button ' + (cancelId ? ('id="' + esc(cancelId) + '" ') : '') + 'type="button">Cancel</button>') : '') +
+              '</div>';
+    }
+    if (meta.url) {
+      var u = esc(meta.url);
+      html += '<p style="margin-top:8px"><a href="' + u + '" target="_blank" rel="noopener noreferrer">' + u + '</a></p>';
+    }
+    if (meta.date) {
+      html += '<p class="muted">' + esc(meta.date) + '</p>';
+    }
+    if (meta.plot) html += '<p style="white-space:pre-wrap">' + esc(meta.plot) + '</p>';
+    if (meta.tags) html += '<div class="muted" style="margin-top:6px">Tags: ' + esc(meta.tags) + '</div>';
+    return html;
+  }
   function normalizePath(path){
     var p = String(path == null ? '' : path);
     if (p.length >= 2) {
@@ -514,19 +555,11 @@ ul{list-style:none;padding:0;margin:0}
     // Update aria-selected for accessibility
     Array.prototype.forEach.call(list.querySelectorAll('.item'), function(n){ n.setAttribute('aria-selected', 'false'); });
     li.setAttribute('aria-selected', 'true');
-    var title = li.getAttribute('data-title') || '';
-    var id = li.getAttribute('data-id') || '';
-    var thumb = li.getAttribute('data-thumb') || '';
-    var tags = li.getAttribute('data-tags') || '';
-    var plot = li.getAttribute('data-plot') || '';
-    var html = '';
-    html += '<h2 style="margin-top:0">' + esc(title) + '</h2>';
     var kind = li.getAttribute('data-kind') || 'video';
+    var html = '';
     if (kind === 'video') {
-      if (thumb) html += '<img src="' + esc(thumb) + '" alt="thumb" />';
-      if (tags) html += '<div class="muted" style="margin-top:6px">Tags: ' + esc(tags) + '</div>';
-      if (plot) html += '<p style="white-space:pre-wrap">' + esc(plot) + '</p>';
-      if (id) html += '<p><a target="_blank" href="https://www.youtube.com/watch?v=' + esc(id) + '">Open on YouTube</a></p>';
+      var meta = getMeta(li);
+      html = buildMetaHTML(meta, { includeTitle: true, includeActions: true, includeCancel: false });
     } else if (kind === 'dir') {
       html += '<p class="muted">Folder. Press Enter or → to open.</p>';
     } else if (kind === 'nav') {
@@ -543,31 +576,9 @@ ul{list-style:none;padding:0;margin:0}
   var prevFocus = null;
   function openOverlayFor(li){
     if (!li) return;
-    var id = li.getAttribute('data-id') || '';
-    var title = li.getAttribute('data-title') || '';
-    var date = li.getAttribute('data-date') || '';
-    var url = id ? ('https://www.youtube.com/watch?v=' + id) : '';
-    var thumb = li.getAttribute('data-thumb') || '';
-    var tags = li.getAttribute('data-tags') || '';
-    var plot = li.getAttribute('data-plot') || '';
-    // Set header title
-    if (overlayTitleEl) overlayTitleEl.textContent = title || '';
-    // Build overlay content in the required order (without title in body)
-    var html = '';
-    if (thumb) html += '<img src="' + esc(thumb) + '" alt="thumb" style="max-width:100%;height:auto;border-radius:6px" />';
-    html += '<div class="actions">' +
-            '<button id="overlay-play" type="button" hx-post="/play" hx-vals="' + esc(JSON.stringify({url: url})) + '" hx-trigger="click" hx-swap="none">Play</button>' +
-            '<button id="overlay-cancel" type="button">Cancel</button>' +
-            '</div>';
-    if (url) {
-      var u = esc(url);
-      html += '<p style="margin-top:8px"><a href="' + u + '" target="_blank" rel="noopener noreferrer">' + u + '</a></p>';
-    }
-    if (date) {
-      html += '<p class="muted">' + esc(date) + '</p>';
-    }
-    if (plot) html += '<p style="white-space:pre-wrap">' + esc(plot) + '</p>';
-    if (tags) html += '<div class="muted" style="margin-top:6px">Tags: ' + esc(tags) + '</div>';
+    var meta = getMeta(li);
+    if (overlayTitleEl) overlayTitleEl.textContent = meta.title || '';
+    var html = buildMetaHTML(meta, { includeTitle: false, includeActions: true, includeCancel: true, playId: 'overlay-play', cancelId: 'overlay-cancel' });
     if (overlayBody) overlayBody.innerHTML = html;
     if (overlayBackdrop) overlayBackdrop.setAttribute('aria-hidden', 'false');
     prevFocus = document.activeElement;
@@ -655,12 +666,14 @@ ul{list-style:none;padding:0;margin:0}
     document.body.addEventListener('htmx:beforeRequest', function(evt){
       var path = evt.detail && evt.detail.requestConfig && evt.detail.requestConfig.path;
       if (path === '/play') {
-        var bodyEl = document.getElementById('overlay-body');
-        if (bodyEl) {
+        var backdrop = document.getElementById('overlay-backdrop');
+        var inOverlay = backdrop && backdrop.getAttribute('aria-hidden') === 'false';
+        var target = inOverlay ? document.getElementById('overlay-body') : document.getElementById('details');
+        if (target) {
           var n = document.createElement('div');
           n.className = 'muted';
           n.textContent = 'Casting…';
-          bodyEl.appendChild(n);
+          target.appendChild(n);
         }
       }
     });
@@ -668,8 +681,10 @@ ul{list-style:none;padding:0;margin:0}
       var path = evt.detail && evt.detail.requestConfig && evt.detail.requestConfig.path;
       if (path === '/play') {
         var xhr = evt.detail.xhr; var status = xhr ? xhr.status : 0;
-        var bodyEl = document.getElementById('overlay-body');
-        if (!bodyEl) return;
+        var backdrop = document.getElementById('overlay-backdrop');
+        var inOverlay = backdrop && backdrop.getAttribute('aria-hidden') === 'false';
+        var target = inOverlay ? document.getElementById('overlay-body') : document.getElementById('details');
+        if (!target) return;
         var msg = document.createElement('div');
         msg.style.marginTop = '6px';
         if (status >= 200 && status < 300) {
@@ -679,7 +694,7 @@ ul{list-style:none;padding:0;margin:0}
           msg.textContent = text;
           msg.className = 'muted';
         }
-        bodyEl.appendChild(msg);
+        target.appendChild(msg);
       }
     });
   }
