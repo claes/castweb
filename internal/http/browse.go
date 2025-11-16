@@ -25,20 +25,22 @@ type server struct {
 
 // NewServer creates an HTTP handler for browsing video metadata rooted at dir.
 func NewServer(root string, ytcastDevice string) nethttp.Handler {
-	// simple HTML template without external assets
-	tpl := template.Must(template.New("page").Funcs(template.FuncMap{
-		"join": strings.Join,
-		"q":    url.QueryEscape,
-		"pjoin": func(a, b string) string {
-			if a == "" {
-				return b
-			}
-			if b == "" {
-				return a
-			}
-			return a + "/" + b
-		},
-	}).Parse(pageTpl))
+    // simple HTML template without external assets
+    tpl := template.Must(template.New("page").Funcs(template.FuncMap{
+        "join": strings.Join,
+        "q":    url.QueryEscape,
+        // iso returns date only (YYYY-MM-DD)
+        "iso":  func(t time.Time) string { return t.Format("2006-01-02") },
+        "pjoin": func(a, b string) string {
+            if a == "" {
+                return b
+            }
+            if b == "" {
+                return a
+            }
+            return a + "/" + b
+        },
+    }).Parse(pageTpl))
 	s := &server{root: root, tpl: tpl, ytcastDevice: ytcastDevice}
 	mux := nethttp.NewServeMux()
 	mux.HandleFunc("/", s.handleBrowse)
@@ -239,7 +241,7 @@ ul{list-style:none;padding:0;margin:0}
 /* Modal overlay */
 .overlay-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.5);display:none;align-items:center;justify-content:center;}
 .overlay-backdrop[aria-hidden="false"]{display:flex}
-.overlay{background:#fff;border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,.25);max-width:50vw;max-height:50vh;width:calc(min(50vw, 700px));padding:16px;overflow:auto}
+.overlay{background:#fff;border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,.25);max-width:90vw;max-height:90vh;width:90vw;padding:16px;overflow:auto}
 .overlay header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
 .overlay .actions{display:flex;gap:8px;margin-top:12px}
 /* Responsive reflow: on small viewports, stack details above list.
@@ -305,6 +307,7 @@ ul{list-style:none;padding:0;margin:0}
               data-kind="video"
               data-title="{{if .Video.Title}}{{.Video.Title}}{{else}}{{.Video.Name}}{{end}}"
               data-id="{{.Video.VideoID}}"
+              data-date="{{iso .ModTime}}"
               data-thumb="{{.Video.ThumbURL}}"
               data-tags="{{join .Video.Tags ", "}}"
               data-plot="{{.Video.Plot}}"
@@ -333,16 +336,12 @@ ul{list-style:none;padding:0;margin:0}
 <!-- Overlay for playing a selected item -->
 <div id="overlay-backdrop" class="overlay-backdrop" aria-hidden="true">
   <div class="overlay" role="dialog" aria-modal="true" aria-labelledby="overlay-title" tabindex="-1">
+    <header>
+      <div id="overlay-title" class="title"></div>
+      <button id="overlay-close" type="button" aria-label="Close">✕</button>
+    </header>
     <div id="overlay-body">
       <p class="muted">No item selected.</p>
-    </div>
-    <div class="actions">
-      <button id="overlay-play" type="button"
-              hx-post="/play"
-              hx-vals='{"url":""}'
-              hx-trigger="click"
-              hx-swap="none">Play</button>
-      <button id="overlay-cancel" type="button">Cancel</button>
     </div>
   </div>
   <div aria-hidden="true"></div>
@@ -415,35 +414,48 @@ ul{list-style:none;padding:0;margin:0}
   var overlayBackdrop = document.getElementById('overlay-backdrop');
   var overlay = overlayBackdrop ? overlayBackdrop.querySelector('.overlay') : null;
   var overlayBody = document.getElementById('overlay-body');
-  var overlayPlay = document.getElementById('overlay-play');
+  var overlayTitleEl = document.getElementById('overlay-title');
   var overlayClose = document.getElementById('overlay-close');
-  var overlayCancel = document.getElementById('overlay-cancel');
   var prevFocus = null;
   function openOverlayFor(li){
     if (!li) return;
     var id = li.getAttribute('data-id') || '';
     var title = li.getAttribute('data-title') || '';
+    var date = li.getAttribute('data-date') || '';
     var url = id ? ('https://www.youtube.com/watch?v=' + id) : '';
-    // Populate body: show a link whose label is the URL
+    var thumb = li.getAttribute('data-thumb') || '';
+    var tags = li.getAttribute('data-tags') || '';
+    var plot = li.getAttribute('data-plot') || '';
+    // Set header title
+    if (overlayTitleEl) overlayTitleEl.textContent = title || '';
+    // Build overlay content in the required order (without title in body)
     var html = '';
-    html += '<div><div class="muted" style="margin-bottom:6px">' + esc(title) + '</div>';
+    if (thumb) html += '<img src="' + esc(thumb) + '" alt="thumb" style="max-width:100%;height:auto;border-radius:6px" />';
+    html += '<div class="actions">' +
+            '<button id="overlay-play" type="button" hx-post="/play" hx-vals="' + esc(JSON.stringify({url: url})) + '" hx-trigger="click" hx-swap="none">Play</button>' +
+            '<button id="overlay-cancel" type="button">Cancel</button>' +
+            '</div>';
     if (url) {
       var u = esc(url);
-      html += '<div><a href="' + u + '" target="_blank" rel="noopener noreferrer">' + u + '</a></div>';
+      html += '<p style="margin-top:8px"><a href="' + u + '" target="_blank" rel="noopener noreferrer">' + u + '</a></p>';
     }
-    html += '</div>';
+    if (date) {
+      html += '<p class="muted">' + esc(date) + '</p>';
+    }
+    if (plot) html += '<p style="white-space:pre-wrap">' + esc(plot) + '</p>';
+    if (tags) html += '<div class="muted" style="margin-top:6px">Tags: ' + esc(tags) + '</div>';
     if (overlayBody) overlayBody.innerHTML = html;
-    if (overlayPlay) overlayPlay.setAttribute('hx-vals', JSON.stringify({url: url}));
     if (overlayBackdrop) overlayBackdrop.setAttribute('aria-hidden', 'false');
     prevFocus = document.activeElement;
     if (overlay) overlay.focus();
+    var overlayCancel = document.getElementById('overlay-cancel');
+    if (overlayCancel) overlayCancel.addEventListener('click', closeOverlay);
   }
   function closeOverlay(){
     if (overlayBackdrop) overlayBackdrop.setAttribute('aria-hidden', 'true');
     if (prevFocus && prevFocus.focus) { prevFocus.focus(); }
   }
   if (overlayClose) overlayClose.addEventListener('click', closeOverlay);
-  if (overlayCancel) overlayCancel.addEventListener('click', closeOverlay);
   if (overlayBackdrop) overlayBackdrop.addEventListener('click', function(e){
     if (e.target === overlayBackdrop) closeOverlay();
   });
