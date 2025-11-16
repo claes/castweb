@@ -8,7 +8,6 @@ import (
     "log/slog"
     nethttp "net/http"
     "net/url"
-    "os"
     "os/exec"
     "path/filepath"
     stdpath "path"
@@ -30,6 +29,8 @@ type server struct {
     mu           sync.RWMutex
 }
 
+const execTimeout = 15 * time.Second
+
 // NewServer creates an HTTP handler for browsing video metadata rooted at dir.
 func NewServer(root string, ytcastDevice string, stateDir string) nethttp.Handler {
     // simple HTML template without external assets
@@ -49,42 +50,14 @@ func NewServer(root string, ytcastDevice string, stateDir string) nethttp.Handle
         },
     }).Parse(pageTpl))
     s := &server{root: root, tpl: tpl, ytcastDevice: ytcastDevice, stateDir: stateDir}
-    // Ensure state file exists and load it. If absent, create it and seed with
-    // the provided ytcastDevice if any. If present but empty, also seed with flag.
+    // Load state if present; do not create directories/files here (packaging/systemd owns it).
     if stateDir != "" {
         statePath := filepath.Join(stateDir, "state.json")
-        if fi, err := os.Stat(statePath); err != nil {
-            if os.IsNotExist(err) {
-                // Create with initial code from flag if provided
-                init := store.State{YtcastCode: ytcastDevice}
-                if err := store.SaveState(statePath, init); err != nil {
-            slog.Error("state create failed", "path", statePath, "err", err)
-                } else {
-                    if ytcastDevice != "" {
-                        s.ytcastCode = ytcastDevice
-                        slog.Info("state created with initial code", "path", statePath)
-                    } else {
-                        slog.Info("state created (empty)", "path", statePath)
-                    }
-                }
-            } else {
-                slog.Warn("state stat failed", "path", statePath, "err", err)
-            }
-        } else if fi.Mode().IsRegular() {
-            if st, err := store.LoadState(statePath); err != nil {
-                slog.Warn("state load failed", "path", statePath, "err", err)
-            } else if st.YtcastCode != "" {
-                s.ytcastCode = st.YtcastCode
-                slog.Info("state loaded", "path", statePath)
-            } else if ytcastDevice != "" {
-                // Seed empty state with flag provided code
-                if err := store.SaveState(statePath, store.State{YtcastCode: ytcastDevice}); err != nil {
-                    slog.Warn("state seed failed", "path", statePath, "err", err)
-                } else {
-                    s.ytcastCode = ytcastDevice
-                    slog.Info("state seeded with initial code", "path", statePath)
-                }
-            }
+        if st, err := store.LoadState(statePath); err != nil {
+            slog.Warn("state load failed", "path", statePath, "err", err)
+        } else if st.YtcastCode != "" {
+            s.ytcastCode = st.YtcastCode
+            slog.Info("state loaded", "path", statePath)
         }
     }
     mux := nethttp.NewServeMux()
@@ -116,19 +89,18 @@ func (s *server) handlePlay(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 	// Only support YouTube URLs for now.
-	parsed, err := url.Parse(u)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+    parsed, err := url.Parse(u)
+    if err != nil || parsed.Scheme == "" || parsed.Host == "" {
         slog.Warn("/play invalid url", "url", u, "err", err)
-		httpError(w, nethttp.StatusBadRequest, "invalid url")
-		return
-	}
-	host := strings.ToLower(parsed.Host)
-	isYouTube := strings.HasSuffix(host, "youtube.com") || strings.HasSuffix(host, "youtu.be")
-	if !isYouTube {
+        httpError(w, nethttp.StatusBadRequest, "invalid url")
+        return
+    }
+    host := strings.ToLower(parsed.Host)
+    if !isYouTubeHost(host) {
         slog.Warn("/play unsupported url host", "host", host)
-		httpError(w, nethttp.StatusBadRequest, "unsupported url")
-		return
-	}
+        httpError(w, nethttp.StatusBadRequest, "unsupported url")
+        return
+    }
     device := s.getYtcastDevice()
     if device == "" {
         slog.Warn("/play device not configured", "hint", "set -ytcast, YTCAST_DEVICE, or /ytcast/set-code")
@@ -136,7 +108,7 @@ func (s *server) handlePlay(w nethttp.ResponseWriter, r *nethttp.Request) {
         return
     }
     // Execute ytcast with the provided URL
-    ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+    ctx, cancel := context.WithTimeout(r.Context(), execTimeout)
     defer cancel()
     bin, _ := exec.LookPath("ytcast")
     args := []string{"-d", device, u}
@@ -167,6 +139,10 @@ func (s *server) handlePlay(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 	w.WriteHeader(nethttp.StatusNoContent)
+}
+
+func isYouTubeHost(host string) bool {
+    return strings.HasSuffix(host, "youtube.com") || strings.HasSuffix(host, "youtu.be")
 }
 
 func (s *server) handleBrowse(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -321,7 +297,7 @@ func (s *server) handleYtcastPair(w nethttp.ResponseWriter, r *nethttp.Request) 
             return
         }
     }
-    ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+    ctx, cancel := context.WithTimeout(r.Context(), execTimeout)
     defer cancel()
     // Run: ytcast -pair <code>
     cmd := exec.CommandContext(ctx, "ytcast", "-pair", code)
@@ -343,7 +319,8 @@ func (s *server) handleYtcastPair(w nethttp.ResponseWriter, r *nethttp.Request) 
 // handleYtcastList invokes `ytcast -l` and writes its stdout as text/plain.
 // Returns 200 on success, 500 on failure.
 func (s *server) handleYtcastList(w nethttp.ResponseWriter, r *nethttp.Request) {
-    ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+    ctx, cancel := context.WithTimeout(r.Context(), execTimeout)
+    defer cancel()
     defer cancel()
     cmd := exec.CommandContext(ctx, "ytcast", "-l")
     var stdout, stderr bytes.Buffer

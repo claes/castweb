@@ -39,7 +39,8 @@ Persistence
 - The server persists the selected ytcast device code to a JSON state file
   named `state.json` under the state directory.
   - Default directory: `/var/lib/castweb` (override with `-state`).
-  - If running without permissions to write there, pick a user-writable directory
-    (e.g. `$XDG_STATE_HOME/castweb`).
-  - On startup, the server creates `<state>/state.json` if missing and loads any
-    existing code; if empty and `-ytcast` is provided, it seeds the file.
+  - The program assumes the directory exists and does not create it. Creation
+    and ownership should be handled by packaging, install scripts, or systemd
+    (e.g., `StateDirectory=castweb`).
+  - If running without permissions to write there, choose a user-writable
+    directory via `-state` (e.g. `$XDG_STATE_HOME/castweb`).

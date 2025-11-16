@@ -6,7 +6,11 @@ import (
     "fmt"
     "io"
     "os"
-    "path/filepath"
+)
+
+const (
+    dirPerm  = 0o750
+    filePerm = 0o600
 )
 
 // State represents the persisted application state.
@@ -43,12 +47,8 @@ func LoadState(path string) (State, error) {
 
 // SaveState writes state to path atomically.
 func SaveState(path string, s State) error {
-    // Tighten directory permissions: 0750 by default.
-    if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
-        return fmt.Errorf("mkdir: %w", err)
-    }
     tmp := path + ".tmp"
-    f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+    f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, filePerm)
     if err != nil {
         return fmt.Errorf("open tmp: %w", err)
     }

@@ -13,13 +13,6 @@ import (
     apphttp "github.com/claes/ytplv/internal/http"
 )
 
-func getenv(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
-}
-
 func main() {
     // Configure structured logging to stderr
     slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{})))
@@ -73,15 +66,21 @@ func main() {
 	done := make(chan os.Signal, 1)
 	signal.Notify(done, syscall.SIGINT, syscall.SIGTERM)
 
+    errCh := make(chan error, 1)
     go func() {
         slog.Info("server listening", "addr", addr)
         if err := srv.ListenAndServe(); err != nil && err != nethttp.ErrServerClosed {
-            slog.Error("listen failed", "err", err)
-            os.Exit(1)
+            errCh <- err
         }
     }()
 
-    <-done
+    select {
+    case <-done:
+        // proceed to shutdown
+    case err := <-errCh:
+        slog.Error("listen failed", "err", err)
+        os.Exit(1)
+    }
     slog.Info("shutdown signal received")
 
     ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
