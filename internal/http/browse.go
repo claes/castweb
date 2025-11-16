@@ -301,9 +301,8 @@ header .up-link:hover, header .up-link:focus{color:var(--link-hover);background:
 header a{ color: var(--link); text-decoration: none; }
 header a:hover, header a:focus{ color: var(--link-hover); text-decoration: underline; }
 ul{list-style:none;padding:0;margin:0}
-.layout{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px;align-items:start}
+.layout{display:grid;grid-template-columns:1fr;gap:24px;align-items:start}
 .panel{border:1px solid var(--border);border-radius:8px;padding:12px;background:var(--panel-bg)}
-.details{position:sticky;top:12px;align-self:start}
 .list{max-height:calc(100vh - 180px);overflow:auto}
 .dirs .dir-item{padding:6px;border-radius:6px;cursor:pointer;margin-bottom:4px}
 .dirs .dir-item:hover{background:var(--hover)}
@@ -370,9 +369,6 @@ ul{list-style:none;padding:0;margin:0}
 <section>
   {{if .Entries}}
   <div class="layout">
-    <div class="panel details" id="details" aria-live="polite">
-      <div class="muted">Select an item →</div>
-    </div>
     <div class="panel list" id="list">
       <ul role="listbox" aria-label="Items">
       {{if .HasPrev}}
@@ -477,7 +473,6 @@ ul{list-style:none;padding:0;margin:0}
 
   var currentPath = {{printf "%q" .Path}};
   var parentPath = {{printf "%q" .ParentPath}};
-  var details = document.getElementById('details');
   var list = document.getElementById('list');
   var dirsList = null; // deprecated separate folder list
   function esc(s){
@@ -504,8 +499,11 @@ ul{list-style:none;padding:0;margin:0}
     var includeTitle = !!opts.includeTitle;
     var includeActions = !!opts.includeActions;
     var includeCancel = !!opts.includeCancel;
+    var includeNav = !!opts.includeNav;
     var playId = opts.playId || '';
     var cancelId = opts.cancelId || '';
+    var prevId = opts.prevId || '';
+    var nextId = opts.nextId || '';
     var html = '';
     if (includeTitle) {
       html += '<h2 style="margin-top:0">' + esc(meta.title || '') + '</h2>';
@@ -513,10 +511,16 @@ ul{list-style:none;padding:0;margin:0}
     if (meta.thumb) html += '<img src="' + esc(meta.thumb) + '" alt="thumb" style="max-width:100%;height:auto;border-radius:6px" />';
     if (includeActions) {
       var vals = esc(JSON.stringify({url: meta.url || ''}));
-      html += '<div class="actions">' +
-              '<button ' + (playId ? ('id="' + esc(playId) + '" ') : '') + 'type="button" hx-post="/play" hx-vals="' + vals + '" hx-trigger="click" hx-swap="none">Play</button>' +
-              (includeCancel ? ('<button ' + (cancelId ? ('id="' + esc(cancelId) + '" ') : '') + 'type="button">Cancel</button>') : '') +
-              '</div>';
+      html += '<div class="actions">';
+      if (includeNav) {
+        html += '<button ' + (prevId ? ('id="' + esc(prevId) + '" ') : '') + 'type="button" aria-label="Previous">⟵ Prev</button>';
+        html += '<button ' + (nextId ? ('id="' + esc(nextId) + '" ') : '') + 'type="button" aria-label="Next">Next ⟶</button>';
+      }
+      html += '<button ' + (playId ? ('id="' + esc(playId) + '" ') : '') + 'type="button" hx-post="/play" hx-vals="' + vals + '" hx-trigger="click" hx-swap="none">Play</button>';
+      if (includeCancel) {
+        html += '<button ' + (cancelId ? ('id="' + esc(cancelId) + '" ') : '') + 'type="button">Cancel</button>';
+      }
+      html += '</div>';
     }
     if (meta.url) {
       var u = esc(meta.url);
@@ -539,6 +543,17 @@ ul{list-style:none;padding:0;margin:0}
     }
     return p;
   }
+  // Ensure the selected list item stays vertically centered in the scrollable list
+  function centerInList(el){
+    if (!list || !el) return;
+    var top = 0, n = el;
+    while (n && n !== list) { top += n.offsetTop || 0; n = n.offsetParent; }
+    var target = top - Math.max(0, (list.clientHeight - el.offsetHeight) / 2);
+    var max = Math.max(0, list.scrollHeight - list.clientHeight);
+    if (target < 0) target = 0;
+    if (target > max) target = max;
+    list.scrollTo({ top: target, behavior: 'auto' });
+  }
   function navigateTo(path){
     var p = normalizePath(path);
     if (!p) { window.location.href = '/'; return; }
@@ -555,17 +570,8 @@ ul{list-style:none;padding:0;margin:0}
     // Update aria-selected for accessibility
     Array.prototype.forEach.call(list.querySelectorAll('.item'), function(n){ n.setAttribute('aria-selected', 'false'); });
     li.setAttribute('aria-selected', 'true');
-    var kind = li.getAttribute('data-kind') || 'video';
-    var html = '';
-    if (kind === 'video') {
-      var meta = getMeta(li);
-      html = buildMetaHTML(meta, { includeTitle: true, includeActions: true, includeCancel: false });
-    } else if (kind === 'dir') {
-      html += '<p class="muted">Folder. Press Enter or → to open.</p>';
-    } else if (kind === 'nav') {
-      html += '<p class="muted">Navigation. Press Enter to follow.</p>';
-    }
-    details.innerHTML = html;
+    centerInList(li);
+    // No left details pane anymore; overlay handles details.
   }
   // Overlay helpers
   var overlayBackdrop = document.getElementById('overlay-backdrop');
@@ -574,27 +580,110 @@ ul{list-style:none;padding:0;margin:0}
   var overlayTitleEl = document.getElementById('overlay-title');
   var overlayClose = document.getElementById('overlay-close');
   var prevFocus = null;
-  function openOverlayFor(li){
+  function openOverlayFor(li, preferred){
     if (!li) return;
     var meta = getMeta(li);
     if (overlayTitleEl) overlayTitleEl.textContent = meta.title || '';
-    var html = buildMetaHTML(meta, { includeTitle: false, includeActions: true, includeCancel: true, playId: 'overlay-play', cancelId: 'overlay-cancel' });
+    var html = buildMetaHTML(meta, { includeTitle: false, includeActions: true, includeCancel: true, includeNav: true, playId: 'overlay-play', cancelId: 'overlay-cancel', prevId: 'overlay-prev', nextId: 'overlay-next' });
     if (overlayBody) overlayBody.innerHTML = html;
     if (overlayBackdrop) overlayBackdrop.setAttribute('aria-hidden', 'false');
     prevFocus = document.activeElement;
     if (overlay) overlay.focus();
     var overlayCancel = document.getElementById('overlay-cancel');
     if (overlayCancel) overlayCancel.addEventListener('click', closeOverlay);
+    // Wire prev/next buttons
+    var prevBtn = document.getElementById('overlay-prev');
+    var nextBtn = document.getElementById('overlay-next');
+    var items = list ? Array.prototype.slice.call(list.querySelectorAll('.item')) : [];
+    var current = list ? (list.querySelector('.item.active') || li) : li;
+    var idx = items.length ? items.indexOf(current) : -1;
+    if (prevBtn) {
+      prevBtn.disabled = (idx <= 0);
+      prevBtn.addEventListener('click', function(){
+        if (!items.length) return;
+        var i = items.indexOf(list.querySelector('.item.active') || li);
+        if (i > 0) {
+          var target = items[i-1];
+          show(target); centerInList(target); openOverlayFor(target, 'prev');
+        }
+      });
+    }
+    if (nextBtn) {
+      nextBtn.disabled = (idx === -1 || idx >= items.length - 1);
+      nextBtn.addEventListener('click', function(){
+        if (!items.length) return;
+        var i = items.indexOf(list.querySelector('.item.active') || li);
+        if (i < items.length - 1) {
+          var target = items[i+1];
+          show(target); centerInList(target); openOverlayFor(target, 'next');
+        }
+      });
+    }
+    // Focus the preferred button after render
+    var playBtn = document.getElementById('overlay-play');
+    var cancelBtn = document.getElementById('overlay-cancel');
+    var focusMap = { prev: prevBtn, next: nextBtn, play: playBtn, cancel: cancelBtn };
+    var toFocus = preferred && focusMap[preferred] ? focusMap[preferred] : playBtn;
+    if (toFocus && !toFocus.disabled) toFocus.focus();
   }
   function closeOverlay(){
     if (overlayBackdrop) overlayBackdrop.setAttribute('aria-hidden', 'true');
-    if (prevFocus && prevFocus.focus) { prevFocus.focus(); }
+    var selected = list && list.querySelector('.item.active');
+    if (selected) { centerInList(selected); selected.focus(); }
+    else if (prevFocus && prevFocus.focus) { prevFocus.focus(); }
   }
   if (overlayClose) overlayClose.addEventListener('click', closeOverlay);
   if (overlayBackdrop) overlayBackdrop.addEventListener('click', function(e){
     if (e.target === overlayBackdrop) closeOverlay();
   });
-  if (overlay) overlay.addEventListener('keydown', function(e){ if (e.key === 'Escape') { e.preventDefault(); closeOverlay(); } });
+  if (overlay) overlay.addEventListener('keydown', function(e){
+    // Close on Escape
+    if (e.key === 'Escape') { e.preventDefault(); closeOverlay(); return; }
+    // Activate Play on Enter/Space
+    if (e.key === 'Enter' || e.key === ' ') {
+      var active = document.activeElement;
+      if (active && active.tagName === 'BUTTON') { e.preventDefault(); active.click(); return; }
+    }
+    // Move focus among all action buttons with Left/Right
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      var prevBtn = document.getElementById('overlay-prev');
+      var nextBtn = document.getElementById('overlay-next');
+      var playBtn = document.getElementById('overlay-play');
+      var cancelBtn = document.getElementById('overlay-cancel');
+      var buttons = [prevBtn, nextBtn, playBtn, cancelBtn].filter(function(b){ return !!b && !b.disabled; });
+      if (buttons.length) {
+        e.preventDefault();
+        var active = document.activeElement;
+        var idx = Math.max(0, buttons.indexOf(active));
+        if (e.key === 'ArrowRight') idx = Math.min(buttons.length - 1, idx + 1);
+        else idx = Math.max(0, idx - 1);
+        buttons[idx].focus();
+        return;
+      }
+    }
+    // Navigate items while overlay is open
+    if (!list) return;
+    var items = Array.prototype.slice.call(list.querySelectorAll('.item'));
+    if (!items.length) return;
+    var current = list.querySelector('.item.active') || items[0];
+    var idx = items.indexOf(current);
+    if (idx === -1) idx = 0;
+    var next = null;
+    if (e.key === 'ArrowDown') { e.preventDefault(); if (idx < items.length - 1) next = items[idx+1]; }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); if (idx > 0) next = items[idx-1]; }
+    else if (e.key === 'PageDown') { e.preventDefault(); next = items[Math.min(items.length - 1, idx + 10)]; }
+    else if (e.key === 'PageUp') { e.preventDefault(); next = items[Math.max(0, idx - 10)]; }
+    if (next) {
+      // Preserve which action button was focused
+      var active = document.activeElement;
+      var pref = null;
+      if (active && active.id === 'overlay-prev') pref = 'prev';
+      else if (active && active.id === 'overlay-next') pref = 'next';
+      else if (active && active.id === 'overlay-play') pref = 'play';
+      else if (active && active.id === 'overlay-cancel') pref = 'cancel';
+      show(next); centerInList(next); openOverlayFor(next, pref || 'play');
+    }
+  });
   if (list) {
     list.addEventListener('click', function(e){
       var li = e.target.closest('.item');
@@ -606,7 +695,7 @@ ul{list-style:none;padding:0;margin:0}
         var href = li.getAttribute('data-href');
         if (href) { window.location.href = href; }
       } else {
-        show(li); openOverlayFor(li);
+        show(li); openOverlayFor(li, 'play');
       }
     });
     list.addEventListener('keydown', function(e){
@@ -617,7 +706,7 @@ ul{list-style:none;padding:0;margin:0}
           var kind = li.getAttribute('data-kind') || 'video';
           if (kind === 'dir') { navigateTo(li.getAttribute('data-path') || ''); }
           else if (kind === 'nav') { var href = li.getAttribute('data-href'); if (href) { window.location.href = href; } }
-          else { show(li); openOverlayFor(li); }
+          else { show(li); openOverlayFor(li, 'play'); }
         }
       } else if (e.key === 'PageDown' || e.key === 'PageUp') {
         e.preventDefault();
@@ -632,7 +721,7 @@ ul{list-style:none;padding:0;margin:0}
           var r = items[i].getBoundingClientRect();
           if (r.bottom > listRect.top + 4) { target = items[i]; break; }
         }
-        if (target) { show(target); target.focus(); }
+        if (target) { show(target); centerInList(target); target.focus(); }
       } else if (e.key === 'ArrowLeft' || e.key === 'Backspace') {
         e.preventDefault();
         navigateParent();
@@ -652,7 +741,7 @@ ul{list-style:none;padding:0;margin:0}
         if (e.key === 'ArrowDown' && idx < items.length - 1) idx++;
         if (e.key === 'ArrowUp' && idx > 0) idx--;
         var next = items[idx];
-        if (next) { show(next); next.focus(); next.scrollIntoView({ block: 'nearest' }); }
+        if (next) { show(next); centerInList(next); next.focus(); }
       }
     });
   }
@@ -666,9 +755,7 @@ ul{list-style:none;padding:0;margin:0}
     document.body.addEventListener('htmx:beforeRequest', function(evt){
       var path = evt.detail && evt.detail.requestConfig && evt.detail.requestConfig.path;
       if (path === '/play') {
-        var backdrop = document.getElementById('overlay-backdrop');
-        var inOverlay = backdrop && backdrop.getAttribute('aria-hidden') === 'false';
-        var target = inOverlay ? document.getElementById('overlay-body') : document.getElementById('details');
+        var target = document.getElementById('overlay-body');
         if (target) {
           var n = document.createElement('div');
           n.className = 'muted';
@@ -681,9 +768,7 @@ ul{list-style:none;padding:0;margin:0}
       var path = evt.detail && evt.detail.requestConfig && evt.detail.requestConfig.path;
       if (path === '/play') {
         var xhr = evt.detail.xhr; var status = xhr ? xhr.status : 0;
-        var backdrop = document.getElementById('overlay-backdrop');
-        var inOverlay = backdrop && backdrop.getAttribute('aria-hidden') === 'false';
-        var target = inOverlay ? document.getElementById('overlay-body') : document.getElementById('details');
+        var target = document.getElementById('overlay-body');
         if (!target) return;
         var msg = document.createElement('div');
         msg.style.marginTop = '6px';
