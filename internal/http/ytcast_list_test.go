@@ -1,3 +1,5 @@
+//go:build integration
+
 package http
 
 import (
@@ -15,7 +17,7 @@ func TestYtcastList_Success(t *testing.T) {
     if runtime.GOOS == "windows" {
         _ = os.WriteFile(exe, []byte("@echo off\r\necho device-one\r\necho device-two\r\nexit /b 0\r\n"), 0o755)
     } else {
-        _ = os.WriteFile(exe, []byte("#!/usr/bin/env sh\necho device-one\necho device-two\n"), 0o755)
+        _ = os.WriteFile(exe, []byte("#!/bin/sh\necho device-one\necho device-two\n"), 0o755)
     }
     t.Setenv("PATH", tmp+string(os.PathListSeparator)+os.Getenv("PATH"))
 
@@ -39,7 +41,7 @@ func TestYtcastList_Failure(t *testing.T) {
     if runtime.GOOS == "windows" {
         _ = os.WriteFile(exe, []byte("@echo off\r\necho error 1>&2\r\nexit /b 1\r\n"), 0o755)
     } else {
-        _ = os.WriteFile(exe, []byte("#!/usr/bin/env sh\necho error 1>&2\nexit 1\n"), 0o755)
+        _ = os.WriteFile(exe, []byte("#!/bin/sh\necho error 1>&2\nexit 1\n"), 0o755)
     }
     t.Setenv("PATH", tmp+string(os.PathListSeparator)+os.Getenv("PATH"))
 

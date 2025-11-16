@@ -1,3 +1,5 @@
+//go:build integration
+
 package http
 
 import (
@@ -22,7 +24,7 @@ func createFakeYtcast(t *testing.T, dir string) string {
         // Basic batch file that succeeds
         content = "@echo off\r\nexit /b 0\r\n"
     } else {
-        content = "#!/usr/bin/env sh\n" +
+        content = "#!/bin/sh\n" +
             "# fake ytcast for tests\n" +
             "exit 0\n"
     }

@@ -1,3 +1,5 @@
+//go:build integration
+
 package http
 
 import (
@@ -28,7 +30,7 @@ func createTracingYtcast(t *testing.T, dir string) string {
             "echo %args%> %TRACE_PATH%\r\n" +
             "exit /b 0\r\n"
     } else {
-        content = "#!/usr/bin/env sh\n" +
+        content = "#!/bin/sh\n" +
             ": \"${TRACE_PATH:?}\"\n" +
             "printf '%s' \"$*\" > \"$TRACE_PATH\"\n" +
             "exit 0\n"
