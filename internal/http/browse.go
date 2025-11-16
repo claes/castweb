@@ -331,7 +331,7 @@ section { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; 
 .overlay-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.5);display:none;align-items:center;justify-content:center;}
 .overlay-backdrop[aria-hidden="false"]{display:flex}
 .overlay{background:var(--panel-bg);border:1px solid var(--border);border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,.25);max-width:90vw;max-height:90vh;width:90vw;padding:18px;overflow:auto;color:var(--text);font-size:1.2rem}
-.overlay header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.overlay header{display:flex;flex-direction:column;align-items:flex-start;gap:8px;margin-bottom:8px}
 .overlay .actions{display:flex;gap:10px;margin-top:12px}
 .overlay .actions button{padding:6px 12px;font-size:1.15rem}
 /* Responsive reflow: on small viewports, stack details above list.
@@ -432,8 +432,8 @@ section { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; 
 <div id="overlay-backdrop" class="overlay-backdrop" aria-hidden="true">
   <div class="overlay" role="dialog" aria-modal="true" aria-labelledby="overlay-title" tabindex="-1">
     <header>
+      <div id="overlay-actions" class="actions" aria-label="Actions"></div>
       <div id="overlay-title" class="title"></div>
-      <button id="overlay-close" type="button" aria-label="Close">✕</button>
     </header>
     <div id="overlay-body">
       <p class="muted">No item selected.</p>
@@ -518,7 +518,7 @@ section { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; 
     if (includeTitle) {
       html += '<h2 style="margin-top:0">' + esc(meta.title || '') + '</h2>';
     }
-    if (meta.thumb) html += '<img src="' + esc(meta.thumb) + '" alt="thumb" style="max-width:100%;height:auto;border-radius:6px" />';
+    // Actions at the top
     if (includeActions) {
       var vals = esc(JSON.stringify({url: meta.url || ''}));
       html += '<div class="actions">';
@@ -532,6 +532,7 @@ section { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; 
       }
       html += '</div>';
     }
+    if (meta.thumb) html += '<img src="' + esc(meta.thumb) + '" alt="thumb" style="max-width:100%;height:auto;border-radius:6px" />';
     if (meta.url) {
       var u = esc(meta.url);
       html += '<p style="margin-top:8px"><a href="' + u + '" target="_blank" rel="noopener noreferrer">' + u + '</a></p>';
@@ -594,11 +595,27 @@ section { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; 
     if (!li) return;
     var meta = getMeta(li);
     if (overlayTitleEl) overlayTitleEl.textContent = meta.title || '';
-    var html = buildMetaHTML(meta, { includeTitle: false, includeActions: true, includeCancel: true, includeNav: true, playId: 'overlay-play', cancelId: 'overlay-cancel', prevId: 'overlay-prev', nextId: 'overlay-next' });
-    if (overlayBody) overlayBody.innerHTML = html;
+    // Body content without actions; actions rendered in header
+    var html = buildMetaHTML(meta, { includeTitle: false, includeActions: false, includeCancel: false, includeNav: false });
+    if (overlayBody) {
+      overlayBody.innerHTML = html;
+      if (window.htmx) { try { htmx.process(overlayBody); } catch (e) {} }
+    }
     if (overlayBackdrop) overlayBackdrop.setAttribute('aria-hidden', 'false');
     prevFocus = document.activeElement;
     if (overlay) overlay.focus();
+    // Render actions in header
+    var actions = document.getElementById('overlay-actions');
+    if (actions) {
+      var vals = JSON.stringify({url: meta.url || ''});
+      var buf = '';
+      buf += '<button id="overlay-prev" type="button" aria-label="Previous">⟵ Prev</button>';
+      buf += '<button id="overlay-next" type="button" aria-label="Next">Next ⟶</button>';
+      buf += '<button id="overlay-play" type="button" hx-post="/play" hx-vals="' + esc(vals) + '" hx-trigger="click" hx-swap="none">Play</button>';
+      buf += '<button id="overlay-cancel" type="button">Cancel</button>';
+      actions.innerHTML = buf;
+      if (window.htmx) { try { htmx.process(actions); } catch (e) {} }
+    }
     var overlayCancel = document.getElementById('overlay-cancel');
     if (overlayCancel) overlayCancel.addEventListener('click', closeOverlay);
     // Wire prev/next buttons
