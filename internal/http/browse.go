@@ -50,72 +50,72 @@ func NewServer(root string, ytcastDevice string) nethttp.Handler {
 }
 
 func (s *server) handlePlay(w nethttp.ResponseWriter, r *nethttp.Request) {
-    // Accept POST (htmx) or GET. Expect parameter "url" (playable URL).
-    if err := r.ParseForm(); err != nil {
-        log.Printf("/play: parse error: %v", err)
-        httpError(w, nethttp.StatusBadRequest, "invalid form")
-        return
-    }
-    u := r.FormValue("url")
-    if u == "" {
-        u = r.URL.Query().Get("url")
-    }
-    if u == "" {
-        log.Printf("/play: missing url")
-        httpError(w, nethttp.StatusBadRequest, "missing url")
-        return
-    }
-    // Only support YouTube URLs for now.
-    parsed, err := url.Parse(u)
-    if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-        log.Printf("/play: invalid url: %q err=%v", u, err)
-        httpError(w, nethttp.StatusBadRequest, "invalid url")
-        return
-    }
-    host := strings.ToLower(parsed.Host)
-    isYouTube := strings.HasSuffix(host, "youtube.com") || strings.HasSuffix(host, "youtu.be")
-    if !isYouTube {
-        log.Printf("/play: unsupported url host: %s", host)
-        httpError(w, nethttp.StatusBadRequest, "unsupported url")
-        return
-    }
-    if s.ytcastDevice == "" {
-        log.Printf("/play: device not configured; set -ytcast or YTCAST_DEVICE")
-        httpError(w, nethttp.StatusBadRequest, "ytcast device not configured")
-        return
-    }
-    // Execute ytcast with the provided URL
-    ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
-    defer cancel()
-    bin, _ := exec.LookPath("ytcast")
-    args := []string{"-d", s.ytcastDevice, u}
-    cmd := exec.CommandContext(ctx, "ytcast", args...)
-    var stdout, stderr bytes.Buffer
-    cmd.Stdout = &stdout
-    cmd.Stderr = &stderr
-    // Log full command line with quoting for troubleshooting
-    q := make([]string, 0, len(args))
-    for _, a := range args {
-        q = append(q, fmt.Sprintf("%q", a))
-    }
-    prog := bin
-    if prog == "" {
-        prog = "ytcast"
-    }
-    log.Printf("/play: casting url=%s device=%s", u, s.ytcastDevice)
-    log.Printf("/play: exec %s %s", prog, strings.Join(q, " "))
-    if err := cmd.Run(); err != nil {
-        exitCode := 0
-        if ee, ok := err.(*exec.ExitError); ok && ee.ProcessState != nil {
-            exitCode = ee.ProcessState.ExitCode()
-        }
-        outStr := strings.TrimSpace(stdout.String())
-        errStr := strings.TrimSpace(stderr.String())
-        log.Printf("/play: ytcast failed: err=%v exit=%d\nstdout: %s\nstderr: %s", err, exitCode, outStr, errStr)
-        httpError(w, nethttp.StatusInternalServerError, "failed to cast")
-        return
-    }
-    w.WriteHeader(nethttp.StatusNoContent)
+	// Accept POST (htmx) or GET. Expect parameter "url" (playable URL).
+	if err := r.ParseForm(); err != nil {
+		log.Printf("/play: parse error: %v", err)
+		httpError(w, nethttp.StatusBadRequest, "invalid form")
+		return
+	}
+	u := r.FormValue("url")
+	if u == "" {
+		u = r.URL.Query().Get("url")
+	}
+	if u == "" {
+		log.Printf("/play: missing url")
+		httpError(w, nethttp.StatusBadRequest, "missing url")
+		return
+	}
+	// Only support YouTube URLs for now.
+	parsed, err := url.Parse(u)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		log.Printf("/play: invalid url: %q err=%v", u, err)
+		httpError(w, nethttp.StatusBadRequest, "invalid url")
+		return
+	}
+	host := strings.ToLower(parsed.Host)
+	isYouTube := strings.HasSuffix(host, "youtube.com") || strings.HasSuffix(host, "youtu.be")
+	if !isYouTube {
+		log.Printf("/play: unsupported url host: %s", host)
+		httpError(w, nethttp.StatusBadRequest, "unsupported url")
+		return
+	}
+	if s.ytcastDevice == "" {
+		log.Printf("/play: device not configured; set -ytcast or YTCAST_DEVICE")
+		httpError(w, nethttp.StatusBadRequest, "ytcast device not configured")
+		return
+	}
+	// Execute ytcast with the provided URL
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	bin, _ := exec.LookPath("ytcast")
+	args := []string{"-d", s.ytcastDevice, u}
+	cmd := exec.CommandContext(ctx, "ytcast", args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	// Log full command line with quoting for troubleshooting
+	q := make([]string, 0, len(args))
+	for _, a := range args {
+		q = append(q, fmt.Sprintf("%q", a))
+	}
+	prog := bin
+	if prog == "" {
+		prog = "ytcast"
+	}
+	log.Printf("/play: casting url=%s device=%s", u, s.ytcastDevice)
+	log.Printf("/play: exec %s %s", prog, strings.Join(q, " "))
+	if err := cmd.Run(); err != nil {
+		exitCode := 0
+		if ee, ok := err.(*exec.ExitError); ok && ee.ProcessState != nil {
+			exitCode = ee.ProcessState.ExitCode()
+		}
+		outStr := strings.TrimSpace(stdout.String())
+		errStr := strings.TrimSpace(stderr.String())
+		log.Printf("/play: ytcast failed: err=%v exit=%d\nstdout: %s\nstderr: %s", err, exitCode, outStr, errStr)
+		httpError(w, nethttp.StatusInternalServerError, "failed to cast")
+		return
+	}
+	w.WriteHeader(nethttp.StatusNoContent)
 }
 
 func (s *server) handleBrowse(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -236,6 +236,12 @@ ul{list-style:none;padding:0;margin:0}
 .title{font-weight:600}
 .details img{max-width:100%;height:auto;border-radius:6px}
 .muted, small{color:#666}
+/* Modal overlay */
+.overlay-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.5);display:none;align-items:center;justify-content:center;}
+.overlay-backdrop[aria-hidden="false"]{display:flex}
+.overlay{background:#fff;border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,.25);max-width:50vw;max-height:50vh;width:calc(min(50vw, 700px));padding:16px;overflow:auto}
+.overlay header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.overlay .actions{display:flex;gap:8px;margin-top:12px}
 /* Responsive reflow: on small viewports, stack details above list.
    In this mode, list uses 75% width and details 25%. */
 @media (max-width: 768px) {
@@ -302,10 +308,7 @@ ul{list-style:none;padding:0;margin:0}
               data-thumb="{{.Video.ThumbURL}}"
               data-tags="{{join .Video.Tags ", "}}"
               data-plot="{{.Video.Plot}}"
-              hx-post="/play"
-              hx-vals='{"url":"https://www.youtube.com/watch?v={{.Video.VideoID}}"}'
-              hx-trigger="click, keyup[key=='Enter']"
-              hx-swap="none">
+              >
             {{if .Video.ThumbURL}}<img class="thumb" src="{{.Video.ThumbURL}}" alt="thumb">{{end}}
             <div class="title">{{if .Video.Title}}{{.Video.Title}}{{else}}{{.Video.Name}}{{end}}</div>
           </li>
@@ -326,6 +329,25 @@ ul{list-style:none;padding:0;margin:0}
     <small>No items found in this folder</small>
   {{end}}
 </section>
+
+<!-- Overlay for playing a selected item -->
+<div id="overlay-backdrop" class="overlay-backdrop" aria-hidden="true">
+  <div class="overlay" role="dialog" aria-modal="true" aria-labelledby="overlay-title" tabindex="-1">
+    <div id="overlay-body">
+      <p class="muted">No item selected.</p>
+    </div>
+    <div class="actions">
+      <button id="overlay-play" type="button"
+              hx-post="/play"
+              hx-vals='{"url":""}'
+              hx-trigger="click"
+              hx-swap="none">Play</button>
+      <button id="overlay-cancel" type="button">Cancel</button>
+    </div>
+  </div>
+  <div aria-hidden="true"></div>
+  <!-- focus sentinel after dialog -->
+</div>
 
 <script src="https://unpkg.com/htmx.org@1.9.12"></script>
 <script>
@@ -389,6 +411,43 @@ ul{list-style:none;padding:0;margin:0}
     }
     details.innerHTML = html;
   }
+  // Overlay helpers
+  var overlayBackdrop = document.getElementById('overlay-backdrop');
+  var overlay = overlayBackdrop ? overlayBackdrop.querySelector('.overlay') : null;
+  var overlayBody = document.getElementById('overlay-body');
+  var overlayPlay = document.getElementById('overlay-play');
+  var overlayClose = document.getElementById('overlay-close');
+  var overlayCancel = document.getElementById('overlay-cancel');
+  var prevFocus = null;
+  function openOverlayFor(li){
+    if (!li) return;
+    var id = li.getAttribute('data-id') || '';
+    var title = li.getAttribute('data-title') || '';
+    var url = id ? ('https://www.youtube.com/watch?v=' + id) : '';
+    // Populate body: show a link whose label is the URL
+    var html = '';
+    html += '<div><div class="muted" style="margin-bottom:6px">' + esc(title) + '</div>';
+    if (url) {
+      var u = esc(url);
+      html += '<div><a href="' + u + '" target="_blank" rel="noopener noreferrer">' + u + '</a></div>';
+    }
+    html += '</div>';
+    if (overlayBody) overlayBody.innerHTML = html;
+    if (overlayPlay) overlayPlay.setAttribute('hx-vals', JSON.stringify({url: url}));
+    if (overlayBackdrop) overlayBackdrop.setAttribute('aria-hidden', 'false');
+    prevFocus = document.activeElement;
+    if (overlay) overlay.focus();
+  }
+  function closeOverlay(){
+    if (overlayBackdrop) overlayBackdrop.setAttribute('aria-hidden', 'true');
+    if (prevFocus && prevFocus.focus) { prevFocus.focus(); }
+  }
+  if (overlayClose) overlayClose.addEventListener('click', closeOverlay);
+  if (overlayCancel) overlayCancel.addEventListener('click', closeOverlay);
+  if (overlayBackdrop) overlayBackdrop.addEventListener('click', function(e){
+    if (e.target === overlayBackdrop) closeOverlay();
+  });
+  if (overlay) overlay.addEventListener('keydown', function(e){ if (e.key === 'Escape') { e.preventDefault(); closeOverlay(); } });
   if (list) {
     list.addEventListener('click', function(e){
       var li = e.target.closest('.item');
@@ -400,7 +459,7 @@ ul{list-style:none;padding:0;margin:0}
         var href = li.getAttribute('data-href');
         if (href) { window.location.href = href; }
       } else {
-        show(li); li.focus();
+        show(li); openOverlayFor(li);
       }
     });
     list.addEventListener('keydown', function(e){
@@ -411,7 +470,7 @@ ul{list-style:none;padding:0;margin:0}
           var kind = li.getAttribute('data-kind') || 'video';
           if (kind === 'dir') { navigateTo(li.getAttribute('data-path') || ''); }
           else if (kind === 'nav') { var href = li.getAttribute('data-href'); if (href) { window.location.href = href; } }
-          else { show(li); }
+          else { show(li); openOverlayFor(li); }
         }
       } else if (e.key === 'PageDown' || e.key === 'PageUp') {
         e.preventDefault();
@@ -460,12 +519,12 @@ ul{list-style:none;padding:0;margin:0}
     document.body.addEventListener('htmx:beforeRequest', function(evt){
       var path = evt.detail && evt.detail.requestConfig && evt.detail.requestConfig.path;
       if (path === '/play') {
-        var detailsEl = document.getElementById('details');
-        if (detailsEl) {
+        var bodyEl = document.getElementById('overlay-body');
+        if (bodyEl) {
           var n = document.createElement('div');
           n.className = 'muted';
           n.textContent = 'Casting…';
-          detailsEl.appendChild(n);
+          bodyEl.appendChild(n);
         }
       }
     });
@@ -473,8 +532,8 @@ ul{list-style:none;padding:0;margin:0}
       var path = evt.detail && evt.detail.requestConfig && evt.detail.requestConfig.path;
       if (path === '/play') {
         var xhr = evt.detail.xhr; var status = xhr ? xhr.status : 0;
-        var detailsEl = document.getElementById('details');
-        if (!detailsEl) return;
+        var bodyEl = document.getElementById('overlay-body');
+        if (!bodyEl) return;
         var msg = document.createElement('div');
         msg.style.marginTop = '6px';
         if (status >= 200 && status < 300) {
@@ -484,7 +543,7 @@ ul{list-style:none;padding:0;margin:0}
           msg.textContent = text;
           msg.className = 'muted';
         }
-        detailsEl.appendChild(msg);
+        bodyEl.appendChild(msg);
       }
     });
   }
