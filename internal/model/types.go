@@ -4,12 +4,13 @@ import "time"
 
 // Video represents a single playable item with associated metadata.
 type Video struct {
-	Name     string // base filename without extension
-	VideoID  string
-	Title    string
-	Plot     string
-	ThumbURL string
-	Tags     []string
+    Name     string // base filename without extension
+    Type     string // source type: youtube, svtplay
+    VideoID  string
+    Title    string
+    Plot     string
+    ThumbURL string
+    Tags     []string
 }
 
 // Listing represents the contents of a directory.

@@ -74,16 +74,26 @@ func NewServer(root string, ytcastDevice string, stateDir string) nethttp.Handle
 
 func (s *server) handlePlay(w nethttp.ResponseWriter, r *nethttp.Request) {
 	// Accept POST (htmx) or GET. Expect parameter "url" (playable URL).
-	if err := r.ParseForm(); err != nil {
+    if err := r.ParseForm(); err != nil {
         slog.Warn("/play parse error", "err", err)
-		httpError(w, nethttp.StatusBadRequest, "invalid form")
-		return
-	}
-	u := r.FormValue("url")
-	if u == "" {
-		u = r.URL.Query().Get("url")
-	}
-	if u == "" {
+        httpError(w, nethttp.StatusBadRequest, "invalid form")
+        return
+    }
+    typ := r.FormValue("type")
+    if typ == "" {
+        typ = r.URL.Query().Get("type")
+    }
+    u := r.FormValue("url")
+    if u == "" {
+        u = r.URL.Query().Get("url")
+    }
+    if typ == "svtplay" {
+        // For SVT stream type, the client constructs the URL. Just log and return.
+        slog.Info("/play svtplay", "url", u)
+        w.WriteHeader(nethttp.StatusNoContent)
+        return
+    }
+    if u == "" {
         slog.Warn("/play missing url")
 		httpError(w, nethttp.StatusBadRequest, "missing url")
 		return
@@ -147,13 +157,23 @@ func isYouTubeHost(host string) bool {
 
 func (s *server) handleBrowse(w nethttp.ResponseWriter, r *nethttp.Request) {
 	// Derive relative path from URL path ("/" => "")
-	p := stdpath.Clean(r.URL.Path)
-	if p == "/" {
-		p = ""
-	} else {
-		p = strings.TrimPrefix(p, "/")
-	}
-	rel := p
+    p := stdpath.Clean(r.URL.Path)
+    if p == "/" {
+        p = ""
+    } else {
+        p = strings.TrimPrefix(p, "/")
+    }
+    // Unescape each path segment so filesystem lookups work with spaces and UTF-8.
+    rel := p
+    if rel != "" {
+        segs := strings.Split(rel, "/")
+        for i, s := range segs {
+            if u, err := url.PathUnescape(s); err == nil {
+                segs[i] = u
+            }
+        }
+        rel = strings.Join(segs, "/")
+    }
 	// sanitize: ensure within root
 	listing, err := browse.BuildListing(s.root, rel)
 	if err != nil {
@@ -528,6 +548,7 @@ section { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; 
           <li class="item" role="option" aria-selected="false" tabindex="0"
               data-kind="video"
               data-title="{{if .Video.Title}}{{.Video.Title}}{{else}}{{.Video.Name}}{{end}}"
+              data-type="{{.Video.Type}}"
               data-id="{{.Video.VideoID}}"
               data-date="{{iso .ModTime}}"
               data-thumb="{{.Video.ThumbURL}}"
@@ -624,12 +645,18 @@ section { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; 
   function getMeta(li){
     var title = li.getAttribute('data-title') || '';
     var id = li.getAttribute('data-id') || '';
-    var url = id ? ('https://www.youtube.com/watch?v=' + id) : '';
+    var typ = li.getAttribute('data-type') || 'youtube';
+    var url = '';
+    if (typ === 'youtube' && id) {
+      url = 'https://www.youtube.com/watch?v=' + id;
+    } else if (typ === 'svtplay' && id) {
+      url = 'https://www.svtplay.se' + id + '?video=visa';
+    }
     var thumb = li.getAttribute('data-thumb') || '';
     var tags = li.getAttribute('data-tags') || '';
     var plot = li.getAttribute('data-plot') || '';
     var date = li.getAttribute('data-date') || '';
-    return { title: title, id: id, url: url, thumb: thumb, tags: tags, plot: plot, date: date };
+    return { title: title, id: id, type: typ, url: url, thumb: thumb, tags: tags, plot: plot, date: date };
   }
   function buildMetaHTML(meta, opts){
     opts = opts || {};
@@ -647,7 +674,7 @@ section { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; 
     }
     // Actions at the top
     if (includeActions) {
-      var vals = esc(JSON.stringify({url: meta.url || ''}));
+      var vals = esc(JSON.stringify({url: meta.url || '', type: meta.type || '', id: meta.id || ''}));
       html += '<div class="actions">';
       if (includeNav) {
         html += '<button ' + (prevId ? ('id="' + esc(prevId) + '" ') : '') + 'type="button" aria-label="Previous">⟵ Prev</button>';
@@ -734,7 +761,7 @@ section { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; 
     // Render actions in header
     var actions = document.getElementById('overlay-actions');
     if (actions) {
-      var vals = JSON.stringify({url: meta.url || ''});
+      var vals = JSON.stringify({url: meta.url || '', type: meta.type || '', id: meta.id || ''});
       var buf = '';
       buf += '<button id="overlay-prev" type="button" aria-label="Previous">⟵ Prev</button>';
       buf += '<button id="overlay-next" type="button" aria-label="Next">Next ⟶</button>';

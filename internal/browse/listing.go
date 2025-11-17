@@ -66,34 +66,35 @@ func BuildListing(root, rel string) (model.Listing, error) {
 		}
 	}
 
-	for _, p := range pairs {
-		if p.strm == "" || p.nfo == "" {
-			continue // only include pairs
-		}
-		vid, err := parser.ParseSTRM(p.strm)
-		if err != nil || vid == "" {
-			continue
-		}
-		title, plot, thumb, tags, err := parser.ParseNFO(p.nfo)
-		if err != nil {
-			continue
-		}
-		listing.Videos = append(listing.Videos, model.Video{
-			Name:     p.base,
-			VideoID:  vid,
-			Title:    title,
-			Plot:     plot,
-			ThumbURL: thumb,
-			Tags:     tags,
-		})
+    for _, p := range pairs {
+        if p.strm == "" || p.nfo == "" {
+            continue // only include pairs
+        }
+        typ, vid, err := parser.ParseStream(p.strm)
+        if err != nil || vid == "" {
+            continue
+        }
+        title, plot, thumb, tags, err := parser.ParseNFO(p.nfo)
+        if err != nil {
+            continue
+        }
+        listing.Videos = append(listing.Videos, model.Video{
+            Name:     p.base,
+            Type:     typ,
+            VideoID:  vid,
+            Title:    title,
+            Plot:     plot,
+            ThumbURL: thumb,
+            Tags:     tags,
+        })
 		// add to combined entries with mod time
-		listing.Entries = append(listing.Entries, model.Entry{
-			Kind:    "video",
-			Name:    titleOr(p.base, title),
-			ModTime: p.mtime,
-			Video:   &model.Video{Name: p.base, VideoID: vid, Title: title, Plot: plot, ThumbURL: thumb, Tags: tags},
-		})
-	}
+        listing.Entries = append(listing.Entries, model.Entry{
+            Kind:    "video",
+            Name:    titleOr(p.base, title),
+            ModTime: p.mtime,
+            Video:   &model.Video{Name: p.base, Type: typ, VideoID: vid, Title: title, Plot: plot, ThumbURL: thumb, Tags: tags},
+        })
+    }
 
 	sort.Strings(listing.Dirs)
 	sort.Slice(listing.Videos, func(i, j int) bool {

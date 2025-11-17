@@ -1,41 +1,45 @@
 package parser
 
 import (
-	"bufio"
-	"net/url"
-	"os"
-	"strings"
+    "bufio"
+    "net/url"
+    "os"
+    "strings"
 )
 
-// ParseSTRM reads a .strm file and extracts the YouTube video_id query parameter.
-func ParseSTRM(path string) (string, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
+// ParseStream reads a .strm file and returns the stream type and id.
+// Supported types:
+// - youtube: plugin://plugin.video.youtube with query param video_id
+// - svtplay: plugin://plugin.video.svtplay with query param id (URL-encoded path)
+// For unsupported or empty lines, returns ("", "").
+func ParseStream(path string) (streamType, id string, err error) {
+    f, err := os.Open(path)
+    if err != nil {
+        return "", "", err
+    }
+    defer f.Close()
 
-	r := bufio.NewReader(f)
-	line, err := r.ReadString('\n')
-	if err != nil && !strings.HasSuffix(line, "\n") {
-		// allow EOF without newline
-		if err != nil {
-			// keep line as-is; err is likely EOF; ignore
-		}
-	}
-	line = strings.TrimSpace(line)
-	if line == "" {
-		return "", nil
-	}
-	// The line may not be a standard URL but should contain query params.
-	// Try to split on '?' and parse the query part.
-	var rawQ string
-	if i := strings.IndexByte(line, '?'); i >= 0 {
-		rawQ = line[i+1:]
-	} else {
-		// attempt to parse entire line as URL for robustness
-		rawQ = line
-	}
-	values, _ := url.ParseQuery(rawQ)
-	return values.Get("video_id"), nil
+    r := bufio.NewReader(f)
+    line, _ := r.ReadString('\n')
+    line = strings.TrimSpace(line)
+    if line == "" {
+        return "", "", nil
+    }
+    lower := strings.ToLower(line)
+    // Extract raw query string (part after '?'), or whole line as fallback
+    var rawQ string
+    if i := strings.IndexByte(line, '?'); i >= 0 {
+        rawQ = line[i+1:]
+    } else {
+        rawQ = line
+    }
+    q, _ := url.ParseQuery(rawQ)
+    switch {
+    case strings.HasPrefix(lower, "plugin://plugin.video.youtube"):
+        return "youtube", q.Get("video_id"), nil
+    case strings.HasPrefix(lower, "plugin://plugin.video.svtplay"):
+        return "svtplay", q.Get("id"), nil
+    default:
+        return "", "", nil
+    }
 }
