@@ -24,4 +24,4 @@ result
 .envrc
 .direnv/
 
-testdata/Top
+testdata
