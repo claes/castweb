@@ -214,6 +214,8 @@ func (s *server) handleBrowse(w nethttp.ResponseWriter, r *nethttp.Request) {
                     default:
                         w.Header().Set("Content-Type", "image/jpeg")
                     }
+                    // Allow client-side caching for 1 minute
+                    w.Header().Set("Cache-Control", "public, max-age=60")
                     nethttp.ServeFile(w, r, full)
                     return
                 }

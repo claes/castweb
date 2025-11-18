@@ -27,6 +27,10 @@ func TestServeImage_JPEG(t *testing.T) {
     if ct != "image/jpeg" {
         t.Fatalf("expected image/jpeg, got %q", ct)
     }
+    cc := rr.Header().Get("Cache-Control")
+    if cc == "" || cc != "public, max-age=60" {
+        t.Fatalf("expected Cache-Control public, max-age=60, got %q", cc)
+    }
 }
 
 func TestServeImage_PNG_Nested(t *testing.T) {
@@ -52,6 +56,10 @@ func TestServeImage_PNG_Nested(t *testing.T) {
     if ct != "image/png" {
         t.Fatalf("expected image/png, got %q", ct)
     }
+    cc := rr.Header().Get("Cache-Control")
+    if cc == "" || cc != "public, max-age=60" {
+        t.Fatalf("expected Cache-Control public, max-age=60, got %q", cc)
+    }
 }
 
 func TestServeImage_NotFound(t *testing.T) {
@@ -65,4 +73,3 @@ func TestServeImage_NotFound(t *testing.T) {
         t.Fatalf("expected 404, got %d", rr.Code)
     }
 }
-
