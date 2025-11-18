@@ -107,6 +107,7 @@ func NewServer(root string, ytcastDevice string, stateDir string, svtEndpoint st
         HealthHandler().ServeHTTP(w, r)
     })
     mux.HandleFunc("/play", s.handlePlay)
+    mux.HandleFunc("/queue", s.handleQueue)
     mux.HandleFunc("/ytcast/pair", s.handleYtcastPair)
     mux.HandleFunc("/ytcast/set-code", s.handleYtcastSetCode)
     mux.HandleFunc("/ytcast/list", s.handleYtcastList)
@@ -133,6 +134,29 @@ func (s *server) handlePlay(w nethttp.ResponseWriter, r *nethttp.Request) {
             return
         }
         w.WriteHeader(nethttp.StatusNoContent)
+        return
+    }
+}
+
+// handleQueue queues a YouTube URL on the configured device (ytcast -a).
+// Only YouTube URLs are supported; SVT is not applicable.
+func (s *server) handleQueue(w nethttp.ResponseWriter, r *nethttp.Request) {
+    typ, u, ok := parsePlayParams(w, r)
+    if !ok {
+        return
+    }
+    ctx := r.Context()
+    // Only allow YouTube for queuing
+    switch typ {
+    case "", "youtube":
+        if code, err := s.queueYouTube(ctx, u); err != nil {
+            httpError(w, code, err.Error())
+            return
+        }
+        w.WriteHeader(nethttp.StatusNoContent)
+        return
+    default:
+        httpError(w, nethttp.StatusBadRequest, "queue supported only for youtube")
         return
     }
 }
@@ -257,6 +281,57 @@ func (s *server) playYouTube(ctx context.Context, u string) (int, error) {
 
 func isYouTubeHost(host string) bool {
     return strings.HasSuffix(host, "youtube.com") || strings.HasSuffix(host, "youtu.be")
+}
+
+// queueYouTube validates the URL and invokes ytcast with -a to add to queue.
+// Returns an HTTP status code to send on error.
+func (s *server) queueYouTube(ctx context.Context, u string) (int, error) {
+    parsed, err := url.Parse(u)
+    if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+        slog.Warn("/queue invalid url", "url", u, "err", err)
+        return nethttp.StatusBadRequest, fmt.Errorf("invalid url")
+    }
+    host := strings.ToLower(parsed.Host)
+    if !isYouTubeHost(host) {
+        slog.Warn("/queue unsupported url host", "host", host)
+        return nethttp.StatusBadRequest, fmt.Errorf("unsupported url")
+    }
+    device := s.getYtcastDevice()
+    if device == "" {
+        slog.Warn("/queue device not configured", "hint", "set -ytcast, YTCAST_DEVICE, or /ytcast/set-code")
+        return nethttp.StatusBadRequest, fmt.Errorf("ytcast device not configured")
+    }
+    // Execute ytcast with the provided URL and add flag
+    cctx, cancel := context.WithTimeout(ctx, execTimeout)
+    defer cancel()
+    bin, _ := exec.LookPath("ytcast")
+    args := []string{"-d", device, "-a", u}
+    cmd := exec.CommandContext(cctx, "ytcast", args...)
+    var stdout, stderr bytes.Buffer
+    cmd.Stdout = &stdout
+    cmd.Stderr = &stderr
+    // Log full command line with quoting for troubleshooting
+    qargs := make([]string, 0, len(args))
+    for _, a := range args {
+        qargs = append(qargs, fmt.Sprintf("%q", a))
+    }
+    prog := bin
+    if prog == "" {
+        prog = "ytcast"
+    }
+    slog.Info("/queue casting", "device", device, "url", u)
+    slog.Debug("/queue exec", "prog", prog, "args", strings.Join(qargs, " "))
+    if err := cmd.Run(); err != nil {
+        exitCode := 0
+        if ee, ok := err.(*exec.ExitError); ok && ee.ProcessState != nil {
+            exitCode = ee.ProcessState.ExitCode()
+        }
+        outStr := strings.TrimSpace(stdout.String())
+        errStr := strings.TrimSpace(stderr.String())
+        slog.Error("/queue ytcast failed", "err", err, "exit", exitCode, "stdout", outStr, "stderr", errStr)
+        return nethttp.StatusInternalServerError, fmt.Errorf("failed to cast")
+    }
+    return 0, nil
 }
 
 func (s *server) handleBrowse(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -796,7 +871,7 @@ section { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; 
     var date = li.getAttribute('data-date') || '';
     return { title: title, id: id, type: typ, url: url, thumb: thumb, tags: tags, plot: plot, date: date };
   }
-  function buildMetaHTML(meta, opts){
+    function buildMetaHTML(meta, opts){
     opts = opts || {};
     var includeTitle = !!opts.includeTitle;
     var includeActions = !!opts.includeActions;
@@ -819,6 +894,9 @@ section { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; 
         html += '<button ' + (nextId ? ('id="' + esc(nextId) + '" ') : '') + 'type="button" aria-label="Next">Next ⟶</button>';
       }
       html += '<button ' + (playId ? ('id="' + esc(playId) + '" ') : '') + 'type="button" hx-post="/play" hx-vals="' + vals + '" hx-trigger="click" hx-swap="none">Play</button>';
+      if ((meta.type || '') === 'youtube') {
+        html += '<button type="button" hx-post="/queue" hx-vals="' + vals + '" hx-trigger="click" hx-swap="none">Queue</button>';
+      }
       if (includeCancel) {
         html += '<button ' + (cancelId ? ('id="' + esc(cancelId) + '" ') : '') + 'type="button">Cancel</button>';
       }
@@ -904,6 +982,9 @@ section { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; 
       buf += '<button id="overlay-prev" type="button" aria-label="Previous">⟵ Prev</button>';
       buf += '<button id="overlay-next" type="button" aria-label="Next">Next ⟶</button>';
       buf += '<button id="overlay-play" type="button" hx-post="/play" hx-vals="' + esc(vals) + '" hx-trigger="click" hx-swap="none">Play</button>';
+      if ((meta.type || '') === 'youtube') {
+        buf += '<button id="overlay-queue" type="button" hx-post="/queue" hx-vals="' + esc(vals) + '" hx-trigger="click" hx-swap="none">Queue</button>';
+      }
       buf += '<button id="overlay-cancel" type="button">Cancel</button>';
       actions.innerHTML = buf;
       if (window.htmx) { try { htmx.process(actions); } catch (e) {} }
@@ -940,8 +1021,9 @@ section { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; 
     }
     // Focus the preferred button after render
     var playBtn = document.getElementById('overlay-play');
+    var queueBtn = document.getElementById('overlay-queue');
     var cancelBtn = document.getElementById('overlay-cancel');
-    var focusMap = { prev: prevBtn, next: nextBtn, play: playBtn, cancel: cancelBtn };
+    var focusMap = { prev: prevBtn, next: nextBtn, play: playBtn, queue: queueBtn, cancel: cancelBtn };
     var toFocus = preferred && focusMap[preferred] ? focusMap[preferred] : playBtn;
     if (toFocus && !toFocus.disabled) toFocus.focus();
   }
@@ -973,8 +1055,9 @@ section { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; 
       var prevBtn = document.getElementById('overlay-prev');
       var nextBtn = document.getElementById('overlay-next');
       var playBtn = document.getElementById('overlay-play');
+      var queueBtn = document.getElementById('overlay-queue');
       var cancelBtn = document.getElementById('overlay-cancel');
-      var buttons = [prevBtn, nextBtn, playBtn, cancelBtn].filter(function(b){ return !!b && !b.disabled; });
+      var buttons = [prevBtn, nextBtn, playBtn, queueBtn, cancelBtn].filter(function(b){ return !!b && !b.disabled; });
       if (buttons.length) {
         e.preventDefault(); e.stopPropagation();
         var active = document.activeElement;
@@ -1004,6 +1087,7 @@ section { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; 
       if (active && active.id === 'overlay-prev') pref = 'prev';
       else if (active && active.id === 'overlay-next') pref = 'next';
       else if (active && active.id === 'overlay-play') pref = 'play';
+      else if (active && active.id === 'overlay-queue') pref = 'queue';
       else if (active && active.id === 'overlay-cancel') pref = 'cancel';
       show(next); centerInList(next); openOverlayFor(next, pref || 'play');
     }
@@ -1115,30 +1199,30 @@ section { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; 
     var first = list.querySelector('.item');
     if (first) { show(first); first.focus(); }
   }
-  // htmx status handling for /play
+  // htmx status handling for /play and /queue
   if (window.htmx) {
     document.body.addEventListener('htmx:beforeRequest', function(evt){
       var path = evt.detail && evt.detail.requestConfig && evt.detail.requestConfig.path;
-      if (path === '/play') {
+      if (path === '/play' || path === '/queue') {
         var target = document.getElementById('overlay-body');
         if (target) {
           var n = document.createElement('div');
           n.className = 'muted';
-          n.textContent = 'Casting…';
+          n.textContent = (path === '/queue') ? 'Queuing…' : 'Casting…';
           target.appendChild(n);
         }
       }
     });
     document.body.addEventListener('htmx:afterRequest', function(evt){
       var path = evt.detail && evt.detail.requestConfig && evt.detail.requestConfig.path;
-      if (path === '/play') {
+      if (path === '/play' || path === '/queue') {
         var xhr = evt.detail.xhr; var status = xhr ? xhr.status : 0;
         var target = document.getElementById('overlay-body');
         if (!target) return;
         var msg = document.createElement('div');
         msg.style.marginTop = '6px';
         if (status >= 200 && status < 300) {
-          msg.textContent = 'Casting started.';
+          msg.textContent = (path === '/queue') ? 'Added to queue.' : 'Casting started.';
         } else {
           var text = xhr && xhr.responseText ? xhr.responseText : 'Failed to cast';
           msg.textContent = text;
