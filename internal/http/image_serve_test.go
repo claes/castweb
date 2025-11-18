@@ -14,7 +14,7 @@ func TestServeImage_JPEG(t *testing.T) {
     if err := os.WriteFile(filepath.Join(root, "test.jpg"), data, 0o644); err != nil {
         t.Fatalf("write jpg: %v", err)
     }
-    mux := NewServer(root, "", "")
+    mux := NewServer(root, "", "", "")
 
     rr := httptest.NewRecorder()
     req := httptest.NewRequest("GET", "/test.jpg", nil)
@@ -43,7 +43,7 @@ func TestServeImage_PNG_Nested(t *testing.T) {
     if err := os.WriteFile(filepath.Join(root, "a", "b", "pic.PNG"), data, 0o644); err != nil {
         t.Fatalf("write png: %v", err)
     }
-    mux := NewServer(root, "", "")
+    mux := NewServer(root, "", "", "")
 
     rr := httptest.NewRecorder()
     req := httptest.NewRequest("GET", "/a/b/pic.PNG", nil)
@@ -64,7 +64,7 @@ func TestServeImage_PNG_Nested(t *testing.T) {
 
 func TestServeImage_NotFound(t *testing.T) {
     root := t.TempDir()
-    mux := NewServer(root, "", "")
+    mux := NewServer(root, "", "", "")
 
     rr := httptest.NewRecorder()
     req := httptest.NewRequest("GET", "/nope.jpg", nil)

@@ -12,7 +12,7 @@ func TestDirectoryRedirectsToTrailingSlash(t *testing.T) {
     if err := os.Mkdir(filepath.Join(root, "HN"), 0o755); err != nil {
         t.Fatalf("mkdir: %v", err)
     }
-    mux := NewServer(root, "", "")
+    mux := NewServer(root, "", "", "")
 
     rr := httptest.NewRecorder()
     req := httptest.NewRequest("GET", "/HN", nil)
@@ -26,4 +26,3 @@ func TestDirectoryRedirectsToTrailingSlash(t *testing.T) {
         t.Fatalf("expected redirect to /HN/, got %q", loc)
     }
 }
-

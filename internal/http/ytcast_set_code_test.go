@@ -42,7 +42,7 @@ func createTracingYtcast(t *testing.T, dir string) string {
 }
 
 func TestYtcastSetCode_Validation(t *testing.T) {
-    mux := NewServer(t.TempDir(), "")
+    mux := NewServer(t.TempDir(), "", "", "")
 
     // missing
     rr := httptest.NewRecorder()
@@ -67,7 +67,7 @@ func TestYtcastSetCode_AppliesToPlay(t *testing.T) {
     t.Setenv("PATH", tmp+string(os.PathListSeparator)+os.Getenv("PATH"))
     t.Setenv("TRACE_PATH", trace)
 
-    mux := NewServer(t.TempDir(), "")
+    mux := NewServer(t.TempDir(), "", "", "")
 
     // Set the code
     rr := httptest.NewRecorder()

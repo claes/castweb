@@ -21,7 +21,7 @@ func TestYtcastList_Success(t *testing.T) {
     }
     t.Setenv("PATH", tmp+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-    mux := NewServer(t.TempDir(), "")
+    mux := NewServer(t.TempDir(), "", "", "")
     rr := httptest.NewRecorder()
     req := httptest.NewRequest("GET", "/ytcast/list", nil)
     mux.ServeHTTP(rr, req)
@@ -45,7 +45,7 @@ func TestYtcastList_Failure(t *testing.T) {
     }
     t.Setenv("PATH", tmp+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-    mux := NewServer(t.TempDir(), "")
+    mux := NewServer(t.TempDir(), "", "", "")
     rr := httptest.NewRecorder()
     req := httptest.NewRequest("GET", "/ytcast/list", nil)
     mux.ServeHTTP(rr, req)

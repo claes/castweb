@@ -25,6 +25,9 @@ Running the server
   - Optional: set persistent state directory with `-state /var/lib/castweb` (default).
     The server stores state in `<state>/state.json`, including the active ytcast
     device code set via `/ytcast/set-code`.
+  - Optional: set SVT play endpoint with `-svtplay-endpoint` (default `http://localhost:18492/play`).
+    When a STRM item of type `svtplay` is played, the server performs a GET to this
+    endpoint with a urlencoded query parameter `url` carrying the SVT URL.
                                                       
 When you click a video item or press Enter on it, the server executes:
 
@@ -33,6 +36,12 @@ When you click a video item or press Enter on it, the server executes:
 Example:
 
     ytcast -d 12345678 'https://www.youtube.com/watch?v=6Td8dTnElAU'
+
+SVT playback
+
+- For `.strm` entries of type `svtplay`, the UI constructs the full SVT URL. The server
+  forwards this to the configured endpoint via HTTP GET: `GET <endpoint>?url=<encoded-url>`.
+  The endpoint is configurable via `-svtplay-endpoint` and defaults to `http://localhost:18492/play`.
 
 Persistence
 

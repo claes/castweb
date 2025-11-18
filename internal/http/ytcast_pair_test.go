@@ -35,7 +35,7 @@ func createFakeYtcast(t *testing.T, dir string) string {
 }
 
 func TestYtcastPair_Validation(t *testing.T) {
-    mux := NewServer(t.TempDir(), "")
+    mux := NewServer(t.TempDir(), "", "", "")
 
     // missing code
     rr := httptest.NewRecorder()
@@ -68,7 +68,7 @@ func TestYtcastPair_Executes(t *testing.T) {
     _ = createFakeYtcast(t, tmp)
     t.Setenv("PATH", tmp+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-    mux := NewServer(t.TempDir(), "")
+    mux := NewServer(t.TempDir(), "", "", "")
 
     rr := httptest.NewRecorder()
     req := httptest.NewRequest("GET", "/ytcast/pair?code=123456789012", nil)

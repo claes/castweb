@@ -21,10 +21,12 @@ func main() {
     var root string
     var ytcastDevice string
     var port string
+    var svtEndpoint string
     var statePath string
 	flag.StringVar(&root, "root", "", "root directory containing .strm/.nfo hierarchy (required)")
     flag.StringVar(&ytcastDevice, "ytcast", "", "ytcast device id to cast to (optional)")
     flag.StringVar(&statePath, "state", "/var/lib/castweb", "directory for persistent state (state.json)")
+    flag.StringVar(&svtEndpoint, "svtplay-endpoint", "http://localhost:18492/play", "endpoint to call for SVT URLs (GET with ?url=)")
 	flag.StringVar(&port, "port", "", "port to listen on (required or set PORT env)")
 	flag.Parse()
 	if root == "" {
@@ -49,7 +51,7 @@ func main() {
         os.Exit(1)
     }
 
-	mux := apphttp.NewServer(root, ytcastDevice, statePath)
+	mux := apphttp.NewServer(root, ytcastDevice, statePath, svtEndpoint)
 
 	addr := ":" + port
 

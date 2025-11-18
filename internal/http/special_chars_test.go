@@ -29,7 +29,7 @@ func TestThumbWithHash_IsEncodedAndServed(t *testing.T) {
         t.Fatalf("write nfo: %v", err)
     }
 
-    mux := NewServer(root, "", "")
+    mux := NewServer(root, "", "", "")
 
     // Request directory; expect trailing-slash redirect first
     rr := httptest.NewRecorder()

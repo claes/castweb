@@ -27,13 +27,30 @@ type server struct {
     ytcastDevice string
     ytcastCode   string
     stateDir     string
+    svtEndpoint  string
     mu           sync.RWMutex
 }
 
 const execTimeout = 15 * time.Second
 
+// svtDoRequest is used by handlePlay to forward SVT URLs to an external endpoint.
+// It is declared as a variable to allow tests to stub it out without network access.
+var svtDoRequest = func(ctx context.Context, requestURL string) (int, error) {
+    req, err := nethttp.NewRequestWithContext(ctx, nethttp.MethodGet, requestURL, nil)
+    if err != nil {
+        return 0, err
+    }
+    client := &nethttp.Client{Timeout: 10 * time.Second}
+    resp, err := client.Do(req)
+    if err != nil {
+        return 0, err
+    }
+    _ = resp.Body.Close()
+    return resp.StatusCode, nil
+}
+
 // NewServer creates an HTTP handler for browsing video metadata rooted at dir.
-func NewServer(root string, ytcastDevice string, stateDir string) nethttp.Handler {
+func NewServer(root string, ytcastDevice string, stateDir string, svtEndpoint string) nethttp.Handler {
     // simple HTML template without external assets
     tpl := template.Must(template.New("page").Funcs(template.FuncMap{
         "join": strings.Join,
@@ -73,7 +90,7 @@ func NewServer(root string, ytcastDevice string, stateDir string) nethttp.Handle
             return "/" + strings.Join(out, "/")
         },
     }).Parse(pageTpl))
-    s := &server{root: root, tpl: tpl, ytcastDevice: ytcastDevice, stateDir: stateDir}
+    s := &server{root: root, tpl: tpl, ytcastDevice: ytcastDevice, stateDir: stateDir, svtEndpoint: svtEndpoint}
     // Load state if present; do not create directories/files here (packaging/systemd owns it).
     if stateDir != "" {
         statePath := filepath.Join(stateDir, "state.json")
@@ -97,82 +114,145 @@ func NewServer(root string, ytcastDevice string, stateDir string) nethttp.Handle
 }
 
 func (s *server) handlePlay(w nethttp.ResponseWriter, r *nethttp.Request) {
-	// Accept POST (htmx) or GET. Expect parameter "url" (playable URL).
+    typ, u, ok := parsePlayParams(w, r)
+    if !ok {
+        return
+    }
+    ctx := r.Context()
+    switch typ {
+    case "svtplay":
+        if code, err := s.playSVT(ctx, u); err != nil {
+            httpError(w, code, err.Error())
+            return
+        }
+        w.WriteHeader(nethttp.StatusNoContent)
+        return
+    default:
+        if code, err := s.playYouTube(ctx, u); err != nil {
+            httpError(w, code, err.Error())
+            return
+        }
+        w.WriteHeader(nethttp.StatusNoContent)
+        return
+    }
+}
+
+// parsePlayParams parses form/query and extracts type and url.
+// Writes a 400 error on failure and returns ok=false.
+func parsePlayParams(w nethttp.ResponseWriter, r *nethttp.Request) (typ, u string, ok bool) {
     if err := r.ParseForm(); err != nil {
         slog.Warn("/play parse error", "err", err)
         httpError(w, nethttp.StatusBadRequest, "invalid form")
-        return
+        return "", "", false
     }
-    typ := r.FormValue("type")
+    typ = r.FormValue("type")
     if typ == "" {
         typ = r.URL.Query().Get("type")
     }
-    u := r.FormValue("url")
+    u = r.FormValue("url")
     if u == "" {
         u = r.URL.Query().Get("url")
     }
     if typ == "svtplay" {
-        // For SVT stream type, the client constructs the URL. Just log and return.
-        slog.Info("/play svtplay", "url", u)
-        w.WriteHeader(nethttp.StatusNoContent)
-        return
+        if u == "" {
+            slog.Warn("/play svtplay missing url")
+            httpError(w, nethttp.StatusBadRequest, "missing url")
+            return "", "", false
+        }
+        return typ, u, true
     }
     if u == "" {
         slog.Warn("/play missing url")
-		httpError(w, nethttp.StatusBadRequest, "missing url")
-		return
-	}
-	// Only support YouTube URLs for now.
+        httpError(w, nethttp.StatusBadRequest, "missing url")
+        return "", "", false
+    }
+    return typ, u, true
+}
+
+// playSVT forwards the SVT URL to the configured endpoint. Returns an HTTP status
+// code to send on error.
+func (s *server) playSVT(ctx context.Context, svtURL string) (int, error) {
+    endpoint := s.svtEndpoint
+    if endpoint == "" {
+        endpoint = "http://localhost:18492/play"
+    }
+    // Compose full request URL including encoded svtURL
+    ep, err := url.Parse(endpoint)
+    if err != nil {
+        slog.Error("/play svtplay invalid endpoint", "endpoint", endpoint, "err", err)
+        return nethttp.StatusBadGateway, fmt.Errorf("invalid svt endpoint")
+    }
+    q := ep.Query()
+    q.Set("url", svtURL)
+    ep.RawQuery = q.Encode()
+    reqURL := ep.String()
+    slog.Info("/play svtplay request", "url", reqURL)
+
+    // Perform request via indirection (allows tests to stub)
+    ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+    defer cancel()
+    status, err := svtDoRequest(ctx, reqURL)
+    if err != nil {
+        slog.Error("/play svtplay call failed", "url", reqURL, "err", err)
+        return nethttp.StatusBadGateway, fmt.Errorf("svt call failed")
+    }
+    if status < 200 || status >= 300 {
+        slog.Warn("/play svtplay non-2xx", "status", status, "url", reqURL)
+        return nethttp.StatusBadGateway, fmt.Errorf("svt endpoint error")
+    }
+    slog.Info("/play svtplay forwarded", "url", reqURL)
+    return 0, nil
+}
+
+// playYouTube validates the URL and invokes ytcast with the configured device.
+// Returns an HTTP status code to send on error.
+func (s *server) playYouTube(ctx context.Context, u string) (int, error) {
     parsed, err := url.Parse(u)
     if err != nil || parsed.Scheme == "" || parsed.Host == "" {
         slog.Warn("/play invalid url", "url", u, "err", err)
-        httpError(w, nethttp.StatusBadRequest, "invalid url")
-        return
+        return nethttp.StatusBadRequest, fmt.Errorf("invalid url")
     }
     host := strings.ToLower(parsed.Host)
     if !isYouTubeHost(host) {
         slog.Warn("/play unsupported url host", "host", host)
-        httpError(w, nethttp.StatusBadRequest, "unsupported url")
-        return
+        return nethttp.StatusBadRequest, fmt.Errorf("unsupported url")
     }
     device := s.getYtcastDevice()
     if device == "" {
         slog.Warn("/play device not configured", "hint", "set -ytcast, YTCAST_DEVICE, or /ytcast/set-code")
-        httpError(w, nethttp.StatusBadRequest, "ytcast device not configured")
-        return
+        return nethttp.StatusBadRequest, fmt.Errorf("ytcast device not configured")
     }
     // Execute ytcast with the provided URL
-    ctx, cancel := context.WithTimeout(r.Context(), execTimeout)
+    cctx, cancel := context.WithTimeout(ctx, execTimeout)
     defer cancel()
     bin, _ := exec.LookPath("ytcast")
     args := []string{"-d", device, u}
-    cmd := exec.CommandContext(ctx, "ytcast", args...)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	// Log full command line with quoting for troubleshooting
-	q := make([]string, 0, len(args))
-	for _, a := range args {
-		q = append(q, fmt.Sprintf("%q", a))
-	}
-	prog := bin
-	if prog == "" {
-		prog = "ytcast"
-	}
+    cmd := exec.CommandContext(cctx, "ytcast", args...)
+    var stdout, stderr bytes.Buffer
+    cmd.Stdout = &stdout
+    cmd.Stderr = &stderr
+    // Log full command line with quoting for troubleshooting
+    qargs := make([]string, 0, len(args))
+    for _, a := range args {
+        qargs = append(qargs, fmt.Sprintf("%q", a))
+    }
+    prog := bin
+    if prog == "" {
+        prog = "ytcast"
+    }
     slog.Info("/play casting", "device", device, "url", u)
-    slog.Debug("/play exec", "prog", prog, "args", strings.Join(q, " "))
-	if err := cmd.Run(); err != nil {
-		exitCode := 0
-		if ee, ok := err.(*exec.ExitError); ok && ee.ProcessState != nil {
-			exitCode = ee.ProcessState.ExitCode()
-		}
-		outStr := strings.TrimSpace(stdout.String())
-		errStr := strings.TrimSpace(stderr.String())
+    slog.Debug("/play exec", "prog", prog, "args", strings.Join(qargs, " "))
+    if err := cmd.Run(); err != nil {
+        exitCode := 0
+        if ee, ok := err.(*exec.ExitError); ok && ee.ProcessState != nil {
+            exitCode = ee.ProcessState.ExitCode()
+        }
+        outStr := strings.TrimSpace(stdout.String())
+        errStr := strings.TrimSpace(stderr.String())
         slog.Error("/play ytcast failed", "err", err, "exit", exitCode, "stdout", outStr, "stderr", errStr)
-		httpError(w, nethttp.StatusInternalServerError, "failed to cast")
-		return
-	}
-	w.WriteHeader(nethttp.StatusNoContent)
+        return nethttp.StatusInternalServerError, fmt.Errorf("failed to cast")
+    }
+    return 0, nil
 }
 
 func isYouTubeHost(host string) bool {
@@ -331,8 +411,8 @@ func (s *server) handleBrowse(w nethttp.ResponseWriter, r *nethttp.Request) {
 		}
 		data.Breadcrumbs = crumbs
 	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = s.tpl.Execute(w, data)
+    w.Header().Set("Content-Type", "text/html; charset=utf-8")
+    _ = s.tpl.Execute(w, data)
 }
 
 func httpError(w nethttp.ResponseWriter, code int, msg string) {
