@@ -890,15 +890,15 @@ section { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; 
       var vals = esc(JSON.stringify({url: meta.url || '', type: meta.type || '', id: meta.id || ''}));
       html += '<div class="actions">';
       if (includeNav) {
-        html += '<button ' + (prevId ? ('id="' + esc(prevId) + '" ') : '') + 'type="button" aria-label="Previous">⟵ Prev</button>';
-        html += '<button ' + (nextId ? ('id="' + esc(nextId) + '" ') : '') + 'type="button" aria-label="Next">Next ⟶</button>';
+        html += '<button ' + (prevId ? ('id="' + esc(prevId) + '" ') : '') + 'type="button" aria-label="Previous">⏮︎</button>';
+        html += '<button ' + (nextId ? ('id="' + esc(nextId) + '" ') : '') + 'type="button" aria-label="Next">⏭︎</button>';
       }
-      html += '<button ' + (playId ? ('id="' + esc(playId) + '" ') : '') + 'type="button" hx-post="/play" hx-vals="' + vals + '" hx-trigger="click" hx-swap="none">Play</button>';
+      html += '<button ' + (playId ? ('id="' + esc(playId) + '" ') : '') + 'type="button" aria-label="Play" hx-post="/play" hx-vals="' + vals + '" hx-trigger="click" hx-swap="none">▶︎</button>';
       if ((meta.type || '') === 'youtube') {
-        html += '<button type="button" hx-post="/queue" hx-vals="' + vals + '" hx-trigger="click" hx-swap="none">Queue</button>';
+        html += '<button type="button" aria-label="Queue" hx-post="/queue" hx-vals="' + vals + '" hx-trigger="click" hx-swap="none">+</button>';
       }
       if (includeCancel) {
-        html += '<button ' + (cancelId ? ('id="' + esc(cancelId) + '" ') : '') + 'type="button">Cancel</button>';
+        html += '<button ' + (cancelId ? ('id="' + esc(cancelId) + '" ') : '') + 'type="button" aria-label="Cancel">×</button>';
       }
       html += '</div>';
     }
@@ -979,13 +979,13 @@ section { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; 
     if (actions) {
       var vals = JSON.stringify({url: meta.url || '', type: meta.type || '', id: meta.id || ''});
       var buf = '';
-      buf += '<button id="overlay-prev" type="button" aria-label="Previous">⟵ Prev</button>';
-      buf += '<button id="overlay-next" type="button" aria-label="Next">Next ⟶</button>';
-      buf += '<button id="overlay-play" type="button" hx-post="/play" hx-vals="' + esc(vals) + '" hx-trigger="click" hx-swap="none">Play</button>';
+      buf += '<button id="overlay-prev" type="button" aria-label="Previous">⏮︎</button>';
+      buf += '<button id="overlay-next" type="button" aria-label="Next">⏭︎</button>';
+      buf += '<button id="overlay-play" type="button" aria-label="Play" hx-post="/play" hx-vals="' + esc(vals) + '" hx-trigger="click" hx-swap="none">▶︎</button>';
       if ((meta.type || '') === 'youtube') {
-        buf += '<button id="overlay-queue" type="button" hx-post="/queue" hx-vals="' + esc(vals) + '" hx-trigger="click" hx-swap="none">Queue</button>';
+        buf += '<button id="overlay-queue" type="button" aria-label="Queue" hx-post="/queue" hx-vals="' + esc(vals) + '" hx-trigger="click" hx-swap="none">+</button>';
       }
-      buf += '<button id="overlay-cancel" type="button">Cancel</button>';
+      buf += '<button id="overlay-cancel" type="button" aria-label="Cancel">×</button>';
       actions.innerHTML = buf;
       if (window.htmx) { try { htmx.process(actions); } catch (e) {} }
     }
