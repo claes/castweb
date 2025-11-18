@@ -8,6 +8,7 @@ import (
     "log/slog"
     nethttp "net/http"
     "net/url"
+    "os"
     "os/exec"
     "path/filepath"
     stdpath "path"
@@ -47,6 +48,29 @@ func NewServer(root string, ytcastDevice string, stateDir string) nethttp.Handle
                 return a
             }
             return a + "/" + b
+        },
+        // urlfor builds a URL path "/<base>/<name>" with proper escaping of each segment.
+        // If name is an absolute http(s) URL, it is returned unchanged.
+        "urlfor": func(base, name string) string {
+            if name == "" {
+                if base == "" { return "/" }
+                // return base path with leading slash
+                var parts []string
+                for _, s := range strings.Split(base, "/") { if s != "" { parts = append(parts, url.PathEscape(s)) } }
+                return "/" + strings.Join(parts, "/") + "/"
+            }
+            if u, err := url.Parse(name); err == nil && (u.Scheme == "http" || u.Scheme == "https") {
+                return name
+            }
+            var segs []string
+            if base != "" { segs = append(segs, strings.Split(base, "/")...) }
+            segs = append(segs, strings.Split(name, "/")...)
+            out := make([]string, 0, len(segs))
+            for _, s := range segs {
+                if s == "" { continue }
+                out = append(out, url.PathEscape(s))
+            }
+            return "/" + strings.Join(out, "/")
         },
     }).Parse(pageTpl))
     s := &server{root: root, tpl: tpl, ytcastDevice: ytcastDevice, stateDir: stateDir}
@@ -174,12 +198,44 @@ func (s *server) handleBrowse(w nethttp.ResponseWriter, r *nethttp.Request) {
         }
         rel = strings.Join(segs, "/")
     }
+
+    // If the requested path is an image file within the root, serve it directly
+    if rel != "" {
+        lower := strings.ToLower(rel)
+        if strings.HasSuffix(lower, ".jpg") || strings.HasSuffix(lower, ".jpeg") || strings.HasSuffix(lower, ".png") {
+            full := filepath.Join(s.root, rel)
+            // Ensure the file is within root and is a regular file
+            if browse.IsSubpath(s.root, full) {
+                if fi, err := os.Stat(full); err == nil && fi.Mode().IsRegular() {
+                    // Set explicit content type for common image types
+                    switch {
+                    case strings.HasSuffix(lower, ".png"):
+                        w.Header().Set("Content-Type", "image/png")
+                    default:
+                        w.Header().Set("Content-Type", "image/jpeg")
+                    }
+                    nethttp.ServeFile(w, r, full)
+                    return
+                }
+            }
+        }
+    }
 	// sanitize: ensure within root
-	listing, err := browse.BuildListing(s.root, rel)
-	if err != nil {
-		httpError(w, nethttp.StatusNotFound, "unable to read path")
-		return
-	}
+    	listing, err := browse.BuildListing(s.root, rel)
+    	if err != nil {
+    		httpError(w, nethttp.StatusNotFound, "unable to read path")
+    		return
+    	}
+
+    // Ensure directory paths have a trailing slash so that relative URLs
+    // within the page (e.g., image src="file.jpg") resolve under the
+    // directory rather than from the root. Redirect /foo to /foo/.
+    if listing.Path != "" && !strings.HasSuffix(r.URL.Path, "/") {
+        u := *r.URL
+        u.Path = r.URL.Path + "/"
+        nethttp.Redirect(w, r, u.String(), nethttp.StatusMovedPermanently)
+        return
+    }
 	// Pagination: 100 items per page over listing.Entries
 	const limit = 100
 	page := 1
@@ -200,7 +256,7 @@ func (s *server) handleBrowse(w nethttp.ResponseWriter, r *nethttp.Request) {
 	// slice entries for this page
 	listing.Entries = listing.Entries[start:end]
 
-	// Build prev/next URLs
+    	// Build prev/next URLs
 	// base path retains the path segment; we only manipulate the page query param
 	base := "/"
 	if rel != "" {
@@ -212,7 +268,7 @@ func (s *server) handleBrowse(w nethttp.ResponseWriter, r *nethttp.Request) {
 			}
 			parts = append(parts, url.PathEscape(seg))
 		}
-		base = "/" + strings.Join(parts, "/")
+		base = "/" + strings.Join(parts, "/") + "/"
 	}
 	q := r.URL.Query()
 	hasPrev := page > 1
@@ -551,11 +607,11 @@ section { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; 
               data-type="{{.Video.Type}}"
               data-id="{{.Video.VideoID}}"
               data-date="{{iso .ModTime}}"
-              data-thumb="{{.Video.ThumbURL}}"
+              data-thumb="{{urlfor $.Path .Video.ThumbURL}}"
               data-tags="{{join .Video.Tags ", "}}"
               data-plot="{{.Video.Plot}}"
               >
-            {{if .Video.ThumbURL}}<img class="thumb" src="{{.Video.ThumbURL}}" alt="thumb">{{end}}
+            {{if .Video.ThumbURL}}<img class="thumb" src="{{urlfor $.Path .Video.ThumbURL}}" alt="thumb">{{end}}
             <div class="title">{{if .Video.Title}}{{.Video.Title}}{{else}}{{.Video.Name}}{{end}}</div>
           </li>
         {{end}}
@@ -723,7 +779,7 @@ section { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; 
     var p = normalizePath(path);
     if (!p) { window.location.href = '/'; return; }
     var parts = p.split('/').filter(Boolean).map(encodeURIComponent);
-    window.location.href = '/' + parts.join('/');
+    window.location.href = '/' + parts.join('/') + '/';
   }
   function navigateParent(){
     navigateTo(parentPath);
