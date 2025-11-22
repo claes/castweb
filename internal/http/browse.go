@@ -763,6 +763,7 @@ section { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; 
               data-title="{{if .Video.Title}}{{.Video.Title}}{{else}}{{.Video.Name}}{{end}}"
               data-type="{{.Video.Type}}"
               data-id="{{.Video.VideoID}}"
+              data-url="{{.Video.URL}}"
               data-date="{{iso .ModTime}}"
               data-thumb="{{urlfor $.Path .Video.ThumbURL}}"
               data-tags="{{join .Video.Tags ", "}}"
@@ -859,10 +860,10 @@ section { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; 
     var title = li.getAttribute('data-title') || '';
     var id = li.getAttribute('data-id') || '';
     var typ = li.getAttribute('data-type') || 'youtube';
-    var url = '';
-    if (typ === 'youtube' && id) {
+    var url = li.getAttribute('data-url') || '';
+    if (!url && typ === 'youtube' && id) {
       url = 'https://www.youtube.com/watch?v=' + id;
-    } else if (typ === 'svtplay' && id) {
+    } else if (!url && typ === 'svtplay' && id) {
       url = 'https://www.svtplay.se' + id + '?video=visa';
     }
     var thumb = li.getAttribute('data-thumb') || '';

@@ -7,6 +7,7 @@ type Video struct {
     Name     string // base filename without extension
     Type     string // source type: youtube, svtplay
     VideoID  string
+    URL      string // optional absolute URL (from .url files), takes precedence
     Title    string
     Plot     string
     ThumbURL string
