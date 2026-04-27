@@ -1,34 +1,35 @@
 package http
 
 import (
-    "bytes"
-    "context"
-    "fmt"
-    "html/template"
-    "log/slog"
-    nethttp "net/http"
-    "net/url"
-    "os"
-    "os/exec"
-    "path/filepath"
-    stdpath "path"
-    "strconv"
-    "strings"
-    "time"
+	"bytes"
+	"context"
+	"fmt"
+	"html/template"
+	"log/slog"
+	nethttp "net/http"
+	"net/url"
+	"os"
+	"os/exec"
+	stdpath "path"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
 
-    "github.com/claes/ytplv/internal/browse"
-    "github.com/claes/ytplv/internal/store"
-    "sync"
+	"github.com/claes/ytplv/internal/browse"
+	"github.com/claes/ytplv/internal/store"
+	"sync"
 )
 
 type server struct {
-    root         string
-    tpl          *template.Template
-    ytcastDevice string
-    ytcastCode   string
-    stateDir     string
-    svtEndpoint  string
-    mu           sync.RWMutex
+	root         string
+	tpl          *template.Template
+	pairTpl      *template.Template
+	ytcastDevice string
+	ytcastCode   string
+	stateDir     string
+	svtEndpoint  string
+	mu           sync.RWMutex
 }
 
 const execTimeout = 15 * time.Second
@@ -36,363 +37,382 @@ const execTimeout = 15 * time.Second
 // svtDoRequest is used by handlePlay to forward SVT URLs to an external endpoint.
 // It is declared as a variable to allow tests to stub it out without network access.
 var svtDoRequest = func(ctx context.Context, requestURL string) (int, error) {
-    req, err := nethttp.NewRequestWithContext(ctx, nethttp.MethodGet, requestURL, nil)
-    if err != nil {
-        return 0, err
-    }
-    client := &nethttp.Client{Timeout: 10 * time.Second}
-    resp, err := client.Do(req)
-    if err != nil {
-        return 0, err
-    }
-    _ = resp.Body.Close()
-    return resp.StatusCode, nil
+	req, err := nethttp.NewRequestWithContext(ctx, nethttp.MethodGet, requestURL, nil)
+	if err != nil {
+		return 0, err
+	}
+	client := &nethttp.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	_ = resp.Body.Close()
+	return resp.StatusCode, nil
 }
 
 // NewServer creates an HTTP handler for browsing video metadata rooted at dir.
 func NewServer(root string, ytcastDevice string, stateDir string, svtEndpoint string) nethttp.Handler {
-    // simple HTML template without external assets
-    tpl := template.Must(template.New("page").Funcs(template.FuncMap{
-        "join": strings.Join,
-        "q":    url.QueryEscape,
-        // iso returns date only (YYYY-MM-DD)
-        "iso":  func(t time.Time) string { return t.Format("2006-01-02") },
-        "pjoin": func(a, b string) string {
-            if a == "" {
-                return b
-            }
-            if b == "" {
-                return a
-            }
-            return a + "/" + b
-        },
-        // urlfor builds a URL path "/<base>/<name>" with proper escaping of each segment.
-        // If name is an absolute http(s) URL, it is returned unchanged.
-        "urlfor": func(base, name string) string {
-            if name == "" {
-                if base == "" { return "/" }
-                // return base path with leading slash
-                var parts []string
-                for _, s := range strings.Split(base, "/") { if s != "" { parts = append(parts, url.PathEscape(s)) } }
-                return "/" + strings.Join(parts, "/") + "/"
-            }
-            if u, err := url.Parse(name); err == nil && (u.Scheme == "http" || u.Scheme == "https") {
-                return name
-            }
-            var segs []string
-            if base != "" { segs = append(segs, strings.Split(base, "/")...) }
-            segs = append(segs, strings.Split(name, "/")...)
-            out := make([]string, 0, len(segs))
-            for _, s := range segs {
-                if s == "" { continue }
-                out = append(out, url.PathEscape(s))
-            }
-            return "/" + strings.Join(out, "/")
-        },
-    }).Parse(pageTpl))
-    s := &server{root: root, tpl: tpl, ytcastDevice: ytcastDevice, stateDir: stateDir, svtEndpoint: svtEndpoint}
-    // Load state if present; do not create directories/files here (packaging/systemd owns it).
-    if stateDir != "" {
-        statePath := filepath.Join(stateDir, "state.json")
-        if st, err := store.LoadState(statePath); err != nil {
-            slog.Warn("state load failed", "path", statePath, "err", err)
-        } else if st.YtcastCode != "" {
-            s.ytcastCode = st.YtcastCode
-            slog.Info("state loaded", "path", statePath)
-        }
-    }
-    mux := nethttp.NewServeMux()
-    mux.HandleFunc("/", s.handleBrowse)
-    mux.HandleFunc("/health", func(w nethttp.ResponseWriter, r *nethttp.Request) {
-        HealthHandler().ServeHTTP(w, r)
-    })
-    mux.HandleFunc("/play", s.handlePlay)
-    mux.HandleFunc("/queue", s.handleQueue)
-    mux.HandleFunc("/ytcast/pair", s.handleYtcastPair)
-    mux.HandleFunc("/ytcast/set-code", s.handleYtcastSetCode)
-    mux.HandleFunc("/ytcast/list", s.handleYtcastList)
-    return mux
+	// simple HTML template without external assets
+	tpl := template.Must(template.New("page").Funcs(template.FuncMap{
+		"join": strings.Join,
+		"q":    url.QueryEscape,
+		// iso returns date only (YYYY-MM-DD)
+		"iso": func(t time.Time) string { return t.Format("2006-01-02") },
+		"pjoin": func(a, b string) string {
+			if a == "" {
+				return b
+			}
+			if b == "" {
+				return a
+			}
+			return a + "/" + b
+		},
+		// urlfor builds a URL path "/<base>/<name>" with proper escaping of each segment.
+		// If name is an absolute http(s) URL, it is returned unchanged.
+		"urlfor": func(base, name string) string {
+			if name == "" {
+				if base == "" {
+					return "/"
+				}
+				// return base path with leading slash
+				var parts []string
+				for _, s := range strings.Split(base, "/") {
+					if s != "" {
+						parts = append(parts, url.PathEscape(s))
+					}
+				}
+				return "/" + strings.Join(parts, "/") + "/"
+			}
+			if u, err := url.Parse(name); err == nil && (u.Scheme == "http" || u.Scheme == "https") {
+				return name
+			}
+			var segs []string
+			if base != "" {
+				segs = append(segs, strings.Split(base, "/")...)
+			}
+			segs = append(segs, strings.Split(name, "/")...)
+			out := make([]string, 0, len(segs))
+			for _, s := range segs {
+				if s == "" {
+					continue
+				}
+				out = append(out, url.PathEscape(s))
+			}
+			return "/" + strings.Join(out, "/")
+		},
+	}).Parse(pageTpl))
+	pairTpl := template.Must(template.New("pair").Parse(pairPageTpl))
+	s := &server{root: root, tpl: tpl, pairTpl: pairTpl, ytcastDevice: ytcastDevice, stateDir: stateDir, svtEndpoint: svtEndpoint}
+	// Load state if present; do not create directories/files here (packaging/systemd owns it).
+	if stateDir != "" {
+		statePath := filepath.Join(stateDir, "state.json")
+		if st, err := store.LoadState(statePath); err != nil {
+			slog.Warn("state load failed", "path", statePath, "err", err)
+		} else if st.YtcastCode != "" {
+			s.ytcastCode = st.YtcastCode
+			slog.Info("state loaded", "path", statePath)
+		}
+	}
+	mux := nethttp.NewServeMux()
+	mux.HandleFunc("/", s.handleBrowse)
+	mux.HandleFunc("/pair", func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		if r.URL.Path != "/pair" {
+			s.handlePairPage(w, r)
+			return
+		}
+		nethttp.Redirect(w, r, "/pair/", nethttp.StatusMovedPermanently)
+	})
+	mux.HandleFunc("/pair/", s.handlePairPage)
+	mux.HandleFunc("/health", func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		HealthHandler().ServeHTTP(w, r)
+	})
+	mux.HandleFunc("/play", s.handlePlay)
+	mux.HandleFunc("/queue", s.handleQueue)
+	mux.HandleFunc("/ytcast/pair", s.handleYtcastPair)
+	mux.HandleFunc("/ytcast/set-code", s.handleYtcastSetCode)
+	mux.HandleFunc("/ytcast/list", s.handleYtcastList)
+	return mux
 }
 
 func (s *server) handlePlay(w nethttp.ResponseWriter, r *nethttp.Request) {
-    typ, u, ok := parsePlayParams(w, r)
-    if !ok {
-        return
-    }
-    ctx := r.Context()
-    switch typ {
-    case "svtplay":
-        if code, err := s.playSVT(ctx, u); err != nil {
-            httpError(w, code, err.Error())
-            return
-        }
-        w.WriteHeader(nethttp.StatusNoContent)
-        return
-    default:
-        if code, err := s.playYouTube(ctx, u); err != nil {
-            httpError(w, code, err.Error())
-            return
-        }
-        w.WriteHeader(nethttp.StatusNoContent)
-        return
-    }
+	typ, u, ok := parsePlayParams(w, r)
+	if !ok {
+		return
+	}
+	ctx := r.Context()
+	switch typ {
+	case "svtplay":
+		if code, err := s.playSVT(ctx, u); err != nil {
+			httpError(w, code, err.Error())
+			return
+		}
+		w.WriteHeader(nethttp.StatusNoContent)
+		return
+	default:
+		if code, err := s.playYouTube(ctx, u); err != nil {
+			httpError(w, code, err.Error())
+			return
+		}
+		w.WriteHeader(nethttp.StatusNoContent)
+		return
+	}
 }
 
 // handleQueue queues a YouTube URL on the configured device (ytcast -a).
 // Only YouTube URLs are supported; SVT is not applicable.
 func (s *server) handleQueue(w nethttp.ResponseWriter, r *nethttp.Request) {
-    typ, u, ok := parsePlayParams(w, r)
-    if !ok {
-        return
-    }
-    ctx := r.Context()
-    // Only allow YouTube for queuing
-    switch typ {
-    case "", "youtube":
-        if code, err := s.queueYouTube(ctx, u); err != nil {
-            httpError(w, code, err.Error())
-            return
-        }
-        w.WriteHeader(nethttp.StatusNoContent)
-        return
-    default:
-        httpError(w, nethttp.StatusBadRequest, "queue supported only for youtube")
-        return
-    }
+	typ, u, ok := parsePlayParams(w, r)
+	if !ok {
+		return
+	}
+	ctx := r.Context()
+	// Only allow YouTube for queuing
+	switch typ {
+	case "", "youtube":
+		if code, err := s.queueYouTube(ctx, u); err != nil {
+			httpError(w, code, err.Error())
+			return
+		}
+		w.WriteHeader(nethttp.StatusNoContent)
+		return
+	default:
+		httpError(w, nethttp.StatusBadRequest, "queue supported only for youtube")
+		return
+	}
 }
 
 // parsePlayParams parses form/query and extracts type and url.
 // Writes a 400 error on failure and returns ok=false.
 func parsePlayParams(w nethttp.ResponseWriter, r *nethttp.Request) (typ, u string, ok bool) {
-    if err := r.ParseForm(); err != nil {
-        slog.Warn("/play parse error", "err", err)
-        httpError(w, nethttp.StatusBadRequest, "invalid form")
-        return "", "", false
-    }
-    typ = r.FormValue("type")
-    if typ == "" {
-        typ = r.URL.Query().Get("type")
-    }
-    u = r.FormValue("url")
-    if u == "" {
-        u = r.URL.Query().Get("url")
-    }
-    if typ == "svtplay" {
-        if u == "" {
-            slog.Warn("/play svtplay missing url")
-            httpError(w, nethttp.StatusBadRequest, "missing url")
-            return "", "", false
-        }
-        return typ, u, true
-    }
-    if u == "" {
-        slog.Warn("/play missing url")
-        httpError(w, nethttp.StatusBadRequest, "missing url")
-        return "", "", false
-    }
-    return typ, u, true
+	if err := r.ParseForm(); err != nil {
+		slog.Warn("/play parse error", "err", err)
+		httpError(w, nethttp.StatusBadRequest, "invalid form")
+		return "", "", false
+	}
+	typ = r.FormValue("type")
+	if typ == "" {
+		typ = r.URL.Query().Get("type")
+	}
+	u = r.FormValue("url")
+	if u == "" {
+		u = r.URL.Query().Get("url")
+	}
+	if typ == "svtplay" {
+		if u == "" {
+			slog.Warn("/play svtplay missing url")
+			httpError(w, nethttp.StatusBadRequest, "missing url")
+			return "", "", false
+		}
+		return typ, u, true
+	}
+	if u == "" {
+		slog.Warn("/play missing url")
+		httpError(w, nethttp.StatusBadRequest, "missing url")
+		return "", "", false
+	}
+	return typ, u, true
 }
 
 // playSVT forwards the SVT URL to the configured endpoint. Returns an HTTP status
 // code to send on error.
 func (s *server) playSVT(ctx context.Context, svtURL string) (int, error) {
-    endpoint := s.svtEndpoint
-    if endpoint == "" {
-        endpoint = "http://localhost:18492/play"
-    }
-    // Compose full request URL including encoded svtURL
-    ep, err := url.Parse(endpoint)
-    if err != nil {
-        slog.Error("/play svtplay invalid endpoint", "endpoint", endpoint, "err", err)
-        return nethttp.StatusBadGateway, fmt.Errorf("invalid svt endpoint")
-    }
-    q := ep.Query()
-    q.Set("url", svtURL)
-    ep.RawQuery = q.Encode()
-    reqURL := ep.String()
-    slog.Info("/play svtplay request", "url", reqURL)
+	endpoint := s.svtEndpoint
+	if endpoint == "" {
+		endpoint = "http://localhost:18492/play"
+	}
+	// Compose full request URL including encoded svtURL
+	ep, err := url.Parse(endpoint)
+	if err != nil {
+		slog.Error("/play svtplay invalid endpoint", "endpoint", endpoint, "err", err)
+		return nethttp.StatusBadGateway, fmt.Errorf("invalid svt endpoint")
+	}
+	q := ep.Query()
+	q.Set("url", svtURL)
+	ep.RawQuery = q.Encode()
+	reqURL := ep.String()
+	slog.Info("/play svtplay request", "url", reqURL)
 
-    // Perform request via indirection (allows tests to stub)
-    ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-    defer cancel()
-    status, err := svtDoRequest(ctx, reqURL)
-    if err != nil {
-        slog.Error("/play svtplay call failed", "url", reqURL, "err", err)
-        return nethttp.StatusBadGateway, fmt.Errorf("svt call failed")
-    }
-    if status < 200 || status >= 300 {
-        slog.Warn("/play svtplay non-2xx", "status", status, "url", reqURL)
-        return nethttp.StatusBadGateway, fmt.Errorf("svt endpoint error")
-    }
-    slog.Info("/play svtplay forwarded", "url", reqURL)
-    return 0, nil
+	// Perform request via indirection (allows tests to stub)
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	status, err := svtDoRequest(ctx, reqURL)
+	if err != nil {
+		slog.Error("/play svtplay call failed", "url", reqURL, "err", err)
+		return nethttp.StatusBadGateway, fmt.Errorf("svt call failed")
+	}
+	if status < 200 || status >= 300 {
+		slog.Warn("/play svtplay non-2xx", "status", status, "url", reqURL)
+		return nethttp.StatusBadGateway, fmt.Errorf("svt endpoint error")
+	}
+	slog.Info("/play svtplay forwarded", "url", reqURL)
+	return 0, nil
 }
 
 // playYouTube validates the URL and invokes ytcast with the configured device.
 // Returns an HTTP status code to send on error.
 func (s *server) playYouTube(ctx context.Context, u string) (int, error) {
-    parsed, err := url.Parse(u)
-    if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-        slog.Warn("/play invalid url", "url", u, "err", err)
-        return nethttp.StatusBadRequest, fmt.Errorf("invalid url")
-    }
-    host := strings.ToLower(parsed.Host)
-    if !isYouTubeHost(host) {
-        slog.Warn("/play unsupported url host", "host", host)
-        return nethttp.StatusBadRequest, fmt.Errorf("unsupported url")
-    }
-    device := s.getYtcastDevice()
-    if device == "" {
-        slog.Warn("/play device not configured", "hint", "set -ytcast, YTCAST_DEVICE, or /ytcast/set-code")
-        return nethttp.StatusBadRequest, fmt.Errorf("ytcast device not configured")
-    }
-    // Execute ytcast with the provided URL
-    cctx, cancel := context.WithTimeout(ctx, execTimeout)
-    defer cancel()
-    bin, _ := exec.LookPath("ytcast")
-    args := []string{"-d", device, u}
-    cmd := exec.CommandContext(cctx, "ytcast", args...)
-    var stdout, stderr bytes.Buffer
-    cmd.Stdout = &stdout
-    cmd.Stderr = &stderr
-    // Log full command line with quoting for troubleshooting
-    qargs := make([]string, 0, len(args))
-    for _, a := range args {
-        qargs = append(qargs, fmt.Sprintf("%q", a))
-    }
-    prog := bin
-    if prog == "" {
-        prog = "ytcast"
-    }
-    slog.Info("/play casting", "device", device, "url", u)
-    slog.Debug("/play exec", "prog", prog, "args", strings.Join(qargs, " "))
-    if err := cmd.Run(); err != nil {
-        exitCode := 0
-        if ee, ok := err.(*exec.ExitError); ok && ee.ProcessState != nil {
-            exitCode = ee.ProcessState.ExitCode()
-        }
-        outStr := strings.TrimSpace(stdout.String())
-        errStr := strings.TrimSpace(stderr.String())
-        slog.Error("/play ytcast failed", "err", err, "exit", exitCode, "stdout", outStr, "stderr", errStr)
-        return nethttp.StatusInternalServerError, fmt.Errorf("failed to cast")
-    }
-    return 0, nil
+	parsed, err := url.Parse(u)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		slog.Warn("/play invalid url", "url", u, "err", err)
+		return nethttp.StatusBadRequest, fmt.Errorf("invalid url")
+	}
+	host := strings.ToLower(parsed.Host)
+	if !isYouTubeHost(host) {
+		slog.Warn("/play unsupported url host", "host", host)
+		return nethttp.StatusBadRequest, fmt.Errorf("unsupported url")
+	}
+	device := s.getYtcastDevice()
+	if device == "" {
+		slog.Warn("/play device not configured", "hint", "set -ytcast, YTCAST_DEVICE, or /ytcast/set-code")
+		return nethttp.StatusBadRequest, fmt.Errorf("ytcast device not configured")
+	}
+	// Execute ytcast with the provided URL
+	cctx, cancel := context.WithTimeout(ctx, execTimeout)
+	defer cancel()
+	bin, _ := exec.LookPath("ytcast")
+	args := []string{"-d", device, u}
+	cmd := exec.CommandContext(cctx, "ytcast", args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	// Log full command line with quoting for troubleshooting
+	qargs := make([]string, 0, len(args))
+	for _, a := range args {
+		qargs = append(qargs, fmt.Sprintf("%q", a))
+	}
+	prog := bin
+	if prog == "" {
+		prog = "ytcast"
+	}
+	slog.Info("/play casting", "device", device, "url", u)
+	slog.Debug("/play exec", "prog", prog, "args", strings.Join(qargs, " "))
+	if err := cmd.Run(); err != nil {
+		exitCode := 0
+		if ee, ok := err.(*exec.ExitError); ok && ee.ProcessState != nil {
+			exitCode = ee.ProcessState.ExitCode()
+		}
+		outStr := strings.TrimSpace(stdout.String())
+		errStr := strings.TrimSpace(stderr.String())
+		slog.Error("/play ytcast failed", "err", err, "exit", exitCode, "stdout", outStr, "stderr", errStr)
+		return nethttp.StatusInternalServerError, fmt.Errorf("failed to cast")
+	}
+	return 0, nil
 }
 
 func isYouTubeHost(host string) bool {
-    return strings.HasSuffix(host, "youtube.com") || strings.HasSuffix(host, "youtu.be")
+	return strings.HasSuffix(host, "youtube.com") || strings.HasSuffix(host, "youtu.be")
 }
 
 // queueYouTube validates the URL and invokes ytcast with -a to add to queue.
 // Returns an HTTP status code to send on error.
 func (s *server) queueYouTube(ctx context.Context, u string) (int, error) {
-    parsed, err := url.Parse(u)
-    if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-        slog.Warn("/queue invalid url", "url", u, "err", err)
-        return nethttp.StatusBadRequest, fmt.Errorf("invalid url")
-    }
-    host := strings.ToLower(parsed.Host)
-    if !isYouTubeHost(host) {
-        slog.Warn("/queue unsupported url host", "host", host)
-        return nethttp.StatusBadRequest, fmt.Errorf("unsupported url")
-    }
-    device := s.getYtcastDevice()
-    if device == "" {
-        slog.Warn("/queue device not configured", "hint", "set -ytcast, YTCAST_DEVICE, or /ytcast/set-code")
-        return nethttp.StatusBadRequest, fmt.Errorf("ytcast device not configured")
-    }
-    // Execute ytcast with the provided URL and add flag
-    cctx, cancel := context.WithTimeout(ctx, execTimeout)
-    defer cancel()
-    bin, _ := exec.LookPath("ytcast")
-    args := []string{"-d", device, "-a", u}
-    cmd := exec.CommandContext(cctx, "ytcast", args...)
-    var stdout, stderr bytes.Buffer
-    cmd.Stdout = &stdout
-    cmd.Stderr = &stderr
-    // Log full command line with quoting for troubleshooting
-    qargs := make([]string, 0, len(args))
-    for _, a := range args {
-        qargs = append(qargs, fmt.Sprintf("%q", a))
-    }
-    prog := bin
-    if prog == "" {
-        prog = "ytcast"
-    }
-    slog.Info("/queue casting", "device", device, "url", u)
-    slog.Debug("/queue exec", "prog", prog, "args", strings.Join(qargs, " "))
-    if err := cmd.Run(); err != nil {
-        exitCode := 0
-        if ee, ok := err.(*exec.ExitError); ok && ee.ProcessState != nil {
-            exitCode = ee.ProcessState.ExitCode()
-        }
-        outStr := strings.TrimSpace(stdout.String())
-        errStr := strings.TrimSpace(stderr.String())
-        slog.Error("/queue ytcast failed", "err", err, "exit", exitCode, "stdout", outStr, "stderr", errStr)
-        return nethttp.StatusInternalServerError, fmt.Errorf("failed to cast")
-    }
-    return 0, nil
+	parsed, err := url.Parse(u)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		slog.Warn("/queue invalid url", "url", u, "err", err)
+		return nethttp.StatusBadRequest, fmt.Errorf("invalid url")
+	}
+	host := strings.ToLower(parsed.Host)
+	if !isYouTubeHost(host) {
+		slog.Warn("/queue unsupported url host", "host", host)
+		return nethttp.StatusBadRequest, fmt.Errorf("unsupported url")
+	}
+	device := s.getYtcastDevice()
+	if device == "" {
+		slog.Warn("/queue device not configured", "hint", "set -ytcast, YTCAST_DEVICE, or /ytcast/set-code")
+		return nethttp.StatusBadRequest, fmt.Errorf("ytcast device not configured")
+	}
+	// Execute ytcast with the provided URL and add flag
+	cctx, cancel := context.WithTimeout(ctx, execTimeout)
+	defer cancel()
+	bin, _ := exec.LookPath("ytcast")
+	args := []string{"-d", device, "-a", u}
+	cmd := exec.CommandContext(cctx, "ytcast", args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	// Log full command line with quoting for troubleshooting
+	qargs := make([]string, 0, len(args))
+	for _, a := range args {
+		qargs = append(qargs, fmt.Sprintf("%q", a))
+	}
+	prog := bin
+	if prog == "" {
+		prog = "ytcast"
+	}
+	slog.Info("/queue casting", "device", device, "url", u)
+	slog.Debug("/queue exec", "prog", prog, "args", strings.Join(qargs, " "))
+	if err := cmd.Run(); err != nil {
+		exitCode := 0
+		if ee, ok := err.(*exec.ExitError); ok && ee.ProcessState != nil {
+			exitCode = ee.ProcessState.ExitCode()
+		}
+		outStr := strings.TrimSpace(stdout.String())
+		errStr := strings.TrimSpace(stderr.String())
+		slog.Error("/queue ytcast failed", "err", err, "exit", exitCode, "stdout", outStr, "stderr", errStr)
+		return nethttp.StatusInternalServerError, fmt.Errorf("failed to cast")
+	}
+	return 0, nil
 }
 
 func (s *server) handleBrowse(w nethttp.ResponseWriter, r *nethttp.Request) {
 	// Derive relative path from URL path ("/" => "")
-    p := stdpath.Clean(r.URL.Path)
-    if p == "/" {
-        p = ""
-    } else {
-        p = strings.TrimPrefix(p, "/")
-    }
-    // Unescape each path segment so filesystem lookups work with spaces and UTF-8.
-    rel := p
-    if rel != "" {
-        segs := strings.Split(rel, "/")
-        for i, s := range segs {
-            if u, err := url.PathUnescape(s); err == nil {
-                segs[i] = u
-            }
-        }
-        rel = strings.Join(segs, "/")
-    }
+	p := stdpath.Clean(r.URL.Path)
+	if p == "/" {
+		p = ""
+	} else {
+		p = strings.TrimPrefix(p, "/")
+	}
+	// Unescape each path segment so filesystem lookups work with spaces and UTF-8.
+	rel := p
+	if rel != "" {
+		segs := strings.Split(rel, "/")
+		for i, s := range segs {
+			if u, err := url.PathUnescape(s); err == nil {
+				segs[i] = u
+			}
+		}
+		rel = strings.Join(segs, "/")
+	}
 
-    // If the requested path is an image file within the root, serve it directly
-    if rel != "" {
-        lower := strings.ToLower(rel)
-        if strings.HasSuffix(lower, ".jpg") || strings.HasSuffix(lower, ".jpeg") || strings.HasSuffix(lower, ".png") {
-            full := filepath.Join(s.root, rel)
-            // Ensure the file is within root and is a regular file
-            if browse.IsSubpath(s.root, full) {
-                if fi, err := os.Stat(full); err == nil && fi.Mode().IsRegular() {
-                    // Set explicit content type for common image types
-                    switch {
-                    case strings.HasSuffix(lower, ".png"):
-                        w.Header().Set("Content-Type", "image/png")
-                    default:
-                        w.Header().Set("Content-Type", "image/jpeg")
-                    }
-                    // Allow client-side caching for 1 minute
-                    w.Header().Set("Cache-Control", "public, max-age=60")
-                    nethttp.ServeFile(w, r, full)
-                    return
-                }
-            }
-        }
-    }
+	// If the requested path is an image file within the root, serve it directly
+	if rel != "" {
+		lower := strings.ToLower(rel)
+		if strings.HasSuffix(lower, ".jpg") || strings.HasSuffix(lower, ".jpeg") || strings.HasSuffix(lower, ".png") {
+			full := filepath.Join(s.root, rel)
+			// Ensure the file is within root and is a regular file
+			if browse.IsSubpath(s.root, full) {
+				if fi, err := os.Stat(full); err == nil && fi.Mode().IsRegular() {
+					// Set explicit content type for common image types
+					switch {
+					case strings.HasSuffix(lower, ".png"):
+						w.Header().Set("Content-Type", "image/png")
+					default:
+						w.Header().Set("Content-Type", "image/jpeg")
+					}
+					// Allow client-side caching for 1 minute
+					w.Header().Set("Cache-Control", "public, max-age=60")
+					nethttp.ServeFile(w, r, full)
+					return
+				}
+			}
+		}
+	}
 	// sanitize: ensure within root
-    	listing, err := browse.BuildListing(s.root, rel)
-    	if err != nil {
-    		httpError(w, nethttp.StatusNotFound, "unable to read path")
-    		return
-    	}
+	listing, err := browse.BuildListing(s.root, rel)
+	if err != nil {
+		httpError(w, nethttp.StatusNotFound, "unable to read path")
+		return
+	}
 
-    // Ensure directory paths have a trailing slash so that relative URLs
-    // within the page (e.g., image src="file.jpg") resolve under the
-    // directory rather than from the root. Redirect /foo to /foo/.
-    if listing.Path != "" && !strings.HasSuffix(r.URL.Path, "/") {
-        u := *r.URL
-        u.Path = r.URL.Path + "/"
-        nethttp.Redirect(w, r, u.String(), nethttp.StatusMovedPermanently)
-        return
-    }
+	// Ensure directory paths have a trailing slash so that relative URLs
+	// within the page (e.g., image src="file.jpg") resolve under the
+	// directory rather than from the root. Redirect /foo to /foo/.
+	if listing.Path != "" && !strings.HasSuffix(r.URL.Path, "/") {
+		u := *r.URL
+		u.Path = r.URL.Path + "/"
+		nethttp.Redirect(w, r, u.String(), nethttp.StatusMovedPermanently)
+		return
+	}
 	// Pagination: 100 items per page over listing.Entries
 	const limit = 100
 	page := 1
@@ -413,7 +433,7 @@ func (s *server) handleBrowse(w nethttp.ResponseWriter, r *nethttp.Request) {
 	// slice entries for this page
 	listing.Entries = listing.Entries[start:end]
 
-    	// Build prev/next URLs
+	// Build prev/next URLs
 	// base path retains the path segment; we only manipulate the page query param
 	base := "/"
 	if rel != "" {
@@ -441,15 +461,15 @@ func (s *server) handleBrowse(w nethttp.ResponseWriter, r *nethttp.Request) {
 		nextURL = base + "?" + q.Encode()
 	}
 	data := struct {
-		Listing    interface{}
-		Page       int
-		HasPrev    bool
-		HasNext    bool
-		PrevURL    string
-		NextURL    string
-		Path       string
-		ParentPath string
-		Entries    interface{}
+		Listing     interface{}
+		Page        int
+		HasPrev     bool
+		HasNext     bool
+		PrevURL     string
+		NextURL     string
+		Path        string
+		ParentPath  string
+		Entries     interface{}
 		Breadcrumbs interface{}
 	}{
 		Listing:    listing,
@@ -465,7 +485,10 @@ func (s *server) handleBrowse(w nethttp.ResponseWriter, r *nethttp.Request) {
 	// Build breadcrumb trail: Root + each path segment
 	{
 		// crumb element type: Name, Href, Current
-		type crumb struct{ Name, Href string; Current bool }
+		type crumb struct {
+			Name, Href string
+			Current    bool
+		}
 		var crumbs []crumb
 		// Root crumb
 		if listing.Path == "" {
@@ -475,7 +498,9 @@ func (s *server) handleBrowse(w nethttp.ResponseWriter, r *nethttp.Request) {
 			parts := strings.Split(listing.Path, "/")
 			var acc string
 			for i, seg := range parts {
-				if seg == "" { continue }
+				if seg == "" {
+					continue
+				}
 				if acc == "" {
 					acc = "/" + url.PathEscape(seg)
 				} else {
@@ -486,116 +511,130 @@ func (s *server) handleBrowse(w nethttp.ResponseWriter, r *nethttp.Request) {
 		}
 		data.Breadcrumbs = crumbs
 	}
-    w.Header().Set("Content-Type", "text/html; charset=utf-8")
-    _ = s.tpl.Execute(w, data)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_ = s.tpl.Execute(w, data)
+}
+
+func (s *server) handlePairPage(w nethttp.ResponseWriter, r *nethttp.Request) {
+	if r.URL.Path != "/pair/" {
+		httpError(w, nethttp.StatusNotFound, "not found")
+		return
+	}
+	data := struct {
+		ActiveDevice string
+	}{
+		ActiveDevice: s.getYtcastDevice(),
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_ = s.pairTpl.Execute(w, data)
 }
 
 func httpError(w nethttp.ResponseWriter, code int, msg string) {
-    w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-    w.WriteHeader(code)
-    _, _ = w.Write([]byte(msg))
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(code)
+	_, _ = w.Write([]byte(msg))
 }
 
 // getYtcastDevice returns the active device to pass to ytcast -d.
 // If a code has been set via /ytcast/set-code, that takes precedence;
 // otherwise the configured ytcastDevice from startup is used.
 func (s *server) getYtcastDevice() string {
-    s.mu.RLock()
-    defer s.mu.RUnlock()
-    if s.ytcastCode != "" {
-        return s.ytcastCode
-    }
-    return s.ytcastDevice
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.ytcastCode != "" {
+		return s.ytcastCode
+	}
+	return s.ytcastDevice
 }
 
 // handleYtcastPair validates a 12-digit pairing code and invokes
 // `ytcast -pair <code>`. Returns 204 on success, 400 on validation error,
 // and 500 on execution failure.
 func (s *server) handleYtcastPair(w nethttp.ResponseWriter, r *nethttp.Request) {
-    code := r.URL.Query().Get("code")
-    if code == "" {
-        slog.Warn("/ytcast/pair missing code")
-        httpError(w, nethttp.StatusBadRequest, "missing code")
-        return
-    }
-    if len(code) != 12 {
-        slog.Warn("/ytcast/pair invalid code length", "code", code)
-        httpError(w, nethttp.StatusBadRequest, "code must be 12 digits")
-        return
-    }
-    for i := 0; i < len(code); i++ {
-        if code[i] < '0' || code[i] > '9' {
-            slog.Warn("/ytcast/pair non-digit in code", "code", code)
-            httpError(w, nethttp.StatusBadRequest, "code must be 12 digits")
-            return
-        }
-    }
-    ctx, cancel := context.WithTimeout(r.Context(), execTimeout)
-    defer cancel()
-    // Run: ytcast -pair <code>
-    cmd := exec.CommandContext(ctx, "ytcast", "-pair", code)
-    var stdout, stderr bytes.Buffer
-    cmd.Stdout = &stdout
-    cmd.Stderr = &stderr
-    slog.Info("/ytcast/pair exec", "code", code)
-    if err := cmd.Run(); err != nil {
-        outStr := strings.TrimSpace(stdout.String())
-        errStr := strings.TrimSpace(stderr.String())
-        slog.Error("/ytcast/pair failed", "err", err, "stdout", outStr, "stderr", errStr)
-        httpError(w, nethttp.StatusInternalServerError, "failed to pair")
-        return
-    }
-    slog.Info("/ytcast/pair success", "code", code)
-    w.WriteHeader(nethttp.StatusNoContent)
+	code := r.URL.Query().Get("code")
+	if code == "" {
+		slog.Warn("/ytcast/pair missing code")
+		httpError(w, nethttp.StatusBadRequest, "missing code")
+		return
+	}
+	if len(code) != 12 {
+		slog.Warn("/ytcast/pair invalid code length", "code", code)
+		httpError(w, nethttp.StatusBadRequest, "code must be 12 digits")
+		return
+	}
+	for i := 0; i < len(code); i++ {
+		if code[i] < '0' || code[i] > '9' {
+			slog.Warn("/ytcast/pair non-digit in code", "code", code)
+			httpError(w, nethttp.StatusBadRequest, "code must be 12 digits")
+			return
+		}
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), execTimeout)
+	defer cancel()
+	// Run: ytcast -pair <code>
+	cmd := exec.CommandContext(ctx, "ytcast", "-pair", code)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	slog.Info("/ytcast/pair exec", "code", code)
+	if err := cmd.Run(); err != nil {
+		outStr := strings.TrimSpace(stdout.String())
+		errStr := strings.TrimSpace(stderr.String())
+		slog.Error("/ytcast/pair failed", "err", err, "stdout", outStr, "stderr", errStr)
+		httpError(w, nethttp.StatusInternalServerError, "failed to pair")
+		return
+	}
+	slog.Info("/ytcast/pair success", "code", code)
+	w.WriteHeader(nethttp.StatusNoContent)
 }
 
 // handleYtcastList invokes `ytcast -l` and writes its stdout as text/plain.
 // Returns 200 on success, 500 on failure.
 func (s *server) handleYtcastList(w nethttp.ResponseWriter, r *nethttp.Request) {
-    ctx, cancel := context.WithTimeout(r.Context(), execTimeout)
-    defer cancel()
-    defer cancel()
-    cmd := exec.CommandContext(ctx, "ytcast", "-l")
-    var stdout, stderr bytes.Buffer
-    cmd.Stdout = &stdout
-    cmd.Stderr = &stderr
-    slog.Info("/ytcast/list exec")
-    if err := cmd.Run(); err != nil {
-        outStr := strings.TrimSpace(stdout.String())
-        errStr := strings.TrimSpace(stderr.String())
-        slog.Error("/ytcast/list failed", "err", err, "stdout", outStr, "stderr", errStr)
-        httpError(w, nethttp.StatusInternalServerError, "failed to list devices")
-        return
-    }
-    slog.Info("/ytcast/list success", "bytes", stdout.Len())
-    w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-    w.WriteHeader(nethttp.StatusOK)
-    _, _ = w.Write(stdout.Bytes())
+	ctx, cancel := context.WithTimeout(r.Context(), execTimeout)
+	defer cancel()
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "ytcast", "-l")
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	slog.Info("/ytcast/list exec")
+	if err := cmd.Run(); err != nil {
+		outStr := strings.TrimSpace(stdout.String())
+		errStr := strings.TrimSpace(stderr.String())
+		slog.Error("/ytcast/list failed", "err", err, "stdout", outStr, "stderr", errStr)
+		httpError(w, nethttp.StatusInternalServerError, "failed to list devices")
+		return
+	}
+	slog.Info("/ytcast/list success", "bytes", stdout.Len())
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(nethttp.StatusOK)
+	_, _ = w.Write(stdout.Bytes())
 }
 
 // handleYtcastSetCode stores a code (as-is) to be used as the device
 // argument for subsequent `ytcast -d` calls (e.g., in /play).
 // Returns 204 on success, 400 when missing the code parameter.
 func (s *server) handleYtcastSetCode(w nethttp.ResponseWriter, r *nethttp.Request) {
-    code := r.URL.Query().Get("code")
-    if code == "" {
-        slog.Warn("/ytcast/set-code missing code")
-        httpError(w, nethttp.StatusBadRequest, "missing code")
-        return
-    }
-    s.mu.Lock()
-    s.ytcastCode = code
-    s.mu.Unlock()
-    slog.Info("/ytcast/set-code set", "code", code)
-    if s.stateDir != "" {
-        statePath := filepath.Join(s.stateDir, "state.json")
-        if err := store.SaveState(statePath, store.State{YtcastCode: code}); err != nil {
-            slog.Error("/ytcast/set-code persist failed", "err", err)
-        } else {
-            slog.Info("/ytcast/set-code persisted", "path", statePath)
-        }
-    }
-    w.WriteHeader(nethttp.StatusNoContent)
+	code := r.URL.Query().Get("code")
+	if code == "" {
+		slog.Warn("/ytcast/set-code missing code")
+		httpError(w, nethttp.StatusBadRequest, "missing code")
+		return
+	}
+	s.mu.Lock()
+	s.ytcastCode = code
+	s.mu.Unlock()
+	slog.Info("/ytcast/set-code set", "code", code)
+	if s.stateDir != "" {
+		statePath := filepath.Join(s.stateDir, "state.json")
+		if err := store.SaveState(statePath, store.State{YtcastCode: code}); err != nil {
+			slog.Error("/ytcast/set-code persist failed", "err", err)
+		} else {
+			slog.Info("/ytcast/set-code persisted", "path", statePath)
+		}
+	}
+	w.WriteHeader(nethttp.StatusNoContent)
 }
 
 const pageTpl = `<!doctype html>
@@ -732,6 +771,7 @@ section { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; 
     </nav>
   </div>
   <div class="header-actions">
+    <a class="up-link" href="/pair/" title="Pair and select devices">Pair</a>
     <button id="theme-toggle" class="theme-toggle" type="button" aria-pressed="false" title="Toggle theme">🌓</button>
   </div>
 </header>
@@ -1230,6 +1270,439 @@ section { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; 
           msg.className = 'muted';
         }
         target.appendChild(msg);
+      }
+    });
+  }
+})();
+</script>
+`
+
+const pairPageTpl = `<!doctype html>
+<html lang="en">
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>castweb pairing</title>
+<style>
+*, *::before, *::after { box-sizing: border-box }
+:root{
+  --bg: #f3efe5;
+  --text: #1f1a14;
+  --panel: rgba(255,255,255,.88);
+  --border: #cdbda8;
+  --accent: #0f6c5c;
+  --accent-strong: #0a5145;
+  --muted: #665a4c;
+  --danger: #a53c2e;
+  --danger-bg: #f9dfda;
+  --ok: #0f6c5c;
+  --ok-bg: #daf2eb;
+  --shadow: 0 18px 50px rgba(61, 46, 28, .12);
+}
+@media (prefers-color-scheme: dark) {
+  :root{
+    --bg: #181512;
+    --text: #f5efe6;
+    --panel: rgba(32,28,24,.92);
+    --border: #4f4338;
+    --accent: #7fe2ca;
+    --accent-strong: #b0f1e2;
+    --muted: #c4b6a7;
+    --danger: #ffb2a5;
+    --danger-bg: #46211a;
+    --ok: #9cf0da;
+    --ok-bg: #163c34;
+    --shadow: 0 18px 50px rgba(0, 0, 0, .3);
+  }
+}
+body{
+  margin:0;
+  min-height:100vh;
+  font: 18px/1.45 system-ui, -apple-system, Segoe UI, sans-serif;
+  color:var(--text);
+  background:
+    radial-gradient(circle at top left, rgba(15,108,92,.22), transparent 35%),
+    radial-gradient(circle at top right, rgba(214,154,71,.18), transparent 30%),
+    linear-gradient(180deg, var(--bg), #e6ddcf);
+}
+@media (prefers-color-scheme: dark) {
+  body{
+    background:
+      radial-gradient(circle at top left, rgba(127,226,202,.16), transparent 35%),
+      radial-gradient(circle at top right, rgba(214,154,71,.14), transparent 30%),
+      linear-gradient(180deg, var(--bg), #100e0c);
+  }
+}
+a, button { transition: background-color .15s ease, color .15s ease, border-color .15s ease }
+a { color:var(--accent-strong) }
+button, input {
+  font: inherit;
+}
+button, .button-link {
+  border:1px solid var(--border);
+  border-radius:999px;
+  background:var(--panel);
+  color:var(--text);
+  padding:.7rem 1rem;
+  cursor:pointer;
+}
+button:hover, button:focus-visible, .button-link:hover, .button-link:focus-visible {
+  border-color:var(--accent);
+}
+button.primary {
+  background:var(--accent);
+  color:#fff;
+  border-color:var(--accent);
+}
+button.primary:hover, button.primary:focus-visible {
+  background:var(--accent-strong);
+  border-color:var(--accent-strong);
+}
+button:focus-visible, input:focus-visible, a:focus-visible {
+  outline:3px solid rgba(15,108,92,.28);
+  outline-offset:3px;
+}
+main {
+  width:min(980px, calc(100% - 2rem));
+  margin:0 auto;
+  padding:1.5rem 0 2rem;
+}
+.topbar {
+  display:flex;
+  justify-content:space-between;
+  gap:1rem;
+  align-items:center;
+  margin-bottom:1.25rem;
+}
+.topbar .button-link {
+  text-decoration:none;
+  display:inline-flex;
+  align-items:center;
+}
+.hero {
+  background:var(--panel);
+  backdrop-filter: blur(10px);
+  border:1px solid var(--border);
+  border-radius:28px;
+  box-shadow:var(--shadow);
+  padding:1.5rem;
+  margin-bottom:1rem;
+}
+.hero h1 {
+  margin:.1rem 0 .5rem;
+  font-size:clamp(2rem, 4vw, 3.2rem);
+  line-height:1;
+}
+.hero p {
+  margin:.4rem 0 0;
+  max-width:42rem;
+}
+.active {
+  display:inline-flex;
+  gap:.55rem;
+  align-items:center;
+  padding:.45rem .8rem;
+  border-radius:999px;
+  background:rgba(15,108,92,.08);
+  color:var(--text);
+  margin-top:1rem;
+  flex-wrap:wrap;
+}
+.grid {
+  display:grid;
+  grid-template-columns:repeat(2, minmax(0, 1fr));
+  gap:1rem;
+}
+.card {
+  background:var(--panel);
+  backdrop-filter: blur(10px);
+  border:1px solid var(--border);
+  border-radius:24px;
+  box-shadow:var(--shadow);
+  padding:1.25rem;
+}
+.card h2 {
+  margin:0 0 .4rem;
+  font-size:1.35rem;
+}
+.card p {
+  margin:.2rem 0 1rem;
+  color:var(--muted);
+}
+.row {
+  display:flex;
+  gap:.7rem;
+  align-items:end;
+  flex-wrap:wrap;
+}
+label {
+  display:block;
+  font-weight:600;
+  margin-bottom:.4rem;
+}
+input[type="text"] {
+  width:100%;
+  min-width:14rem;
+  border:1px solid var(--border);
+  border-radius:16px;
+  background:rgba(255,255,255,.75);
+  color:var(--text);
+  padding:.8rem .95rem;
+}
+@media (prefers-color-scheme: dark) {
+  input[type="text"] {
+    background:rgba(0,0,0,.18);
+  }
+}
+.field {
+  flex:1 1 16rem;
+}
+.hint {
+  margin-top:.45rem;
+  color:var(--muted);
+  font-size:.95rem;
+}
+.status {
+  min-height:3rem;
+  margin-top:1rem;
+  padding:.85rem 1rem;
+  border-radius:16px;
+  border:1px solid transparent;
+}
+.status:empty {
+  display:none;
+}
+.status.ok {
+  color:var(--ok);
+  background:var(--ok-bg);
+  border-color:var(--ok);
+}
+.status.error {
+  color:var(--danger);
+  background:var(--danger-bg);
+  border-color:var(--danger);
+}
+.device-actions {
+  display:flex;
+  gap:.6rem;
+  flex-wrap:wrap;
+  margin-bottom:1rem;
+}
+.device-list {
+  display:grid;
+  gap:.7rem;
+}
+.device {
+  display:flex;
+  justify-content:space-between;
+  gap:.8rem;
+  align-items:center;
+  padding:.85rem .95rem;
+  border:1px solid var(--border);
+  border-radius:18px;
+  background:rgba(255,255,255,.55);
+}
+@media (prefers-color-scheme: dark) {
+  .device {
+    background:rgba(255,255,255,.04);
+  }
+}
+.device-name {
+  font-weight:600;
+  overflow-wrap:anywhere;
+}
+.loading {
+  color:var(--muted);
+}
+.visually-hidden {
+  position:absolute;
+  width:1px;
+  height:1px;
+  padding:0;
+  margin:-1px;
+  overflow:hidden;
+  clip:rect(0, 0, 0, 0);
+  white-space:nowrap;
+  border:0;
+}
+@media (max-width: 760px) {
+  .grid {
+    grid-template-columns:1fr;
+  }
+  .row {
+    align-items:stretch;
+  }
+  .row button {
+    width:100%;
+  }
+}
+</style>
+<main>
+  <div class="topbar">
+    <a class="button-link" href="/">Back to library</a>
+  </div>
+
+  <section class="hero" aria-labelledby="pairing-title">
+    <h1 id="pairing-title">Pair and select playback targets</h1>
+    <p>Use the 12-digit code shown on your device to pair it, then pick the active playback target for future casts.</p>
+    <div class="active">
+      <strong>Current target:</strong>
+      <span id="active-device">{{if .ActiveDevice}}{{.ActiveDevice}}{{else}}Not set{{end}}</span>
+    </div>
+  </section>
+
+  <div class="grid">
+    <section class="card" aria-labelledby="pair-card-title">
+      <h2 id="pair-card-title">Pair a new device</h2>
+      <p>Enter the code exactly as shown on the screen.</p>
+      <form id="pair-form" class="pair-form" hx-get="/ytcast/pair" hx-target="#pair-status" hx-swap="none">
+        <div class="row">
+          <div class="field">
+            <label for="pair-code">Pairing code</label>
+            <input id="pair-code" name="code" type="text" inputmode="numeric" pattern="[0-9]{12}" minlength="12" maxlength="12" autocomplete="off" placeholder="123456789012" autofocus />
+            <div class="hint">Twelve digits, no spaces.</div>
+          </div>
+          <button class="primary" type="submit">Pair device</button>
+        </div>
+      </form>
+      <div id="pair-status" class="status" aria-live="polite"></div>
+    </section>
+
+    <section class="card" aria-labelledby="device-card-title">
+      <h2 id="device-card-title">Available targets</h2>
+      <p>Load devices discovered by ` + "`ytcast -l`" + ` and make one active for playback.</p>
+      <div class="device-actions">
+        <button id="load-devices" type="button" class="primary" hx-get="/ytcast/list" hx-target="#raw-device-list" hx-swap="innerHTML">Refresh list</button>
+      </div>
+      <div id="device-status" class="status" aria-live="polite"></div>
+      <div id="device-list" class="device-list" role="list" aria-label="Discovered devices"></div>
+      <pre id="raw-device-list" class="visually-hidden" aria-hidden="true"></pre>
+    </section>
+  </div>
+</main>
+
+<script src="https://unpkg.com/htmx.org@1.9.12"></script>
+<script>
+(function(){
+  var pairForm = document.getElementById('pair-form');
+  var pairCode = document.getElementById('pair-code');
+  var pairStatus = document.getElementById('pair-status');
+  var rawDeviceList = document.getElementById('raw-device-list');
+  var deviceList = document.getElementById('device-list');
+  var deviceStatus = document.getElementById('device-status');
+  var activeDevice = document.getElementById('active-device');
+
+  function setStatus(el, kind, text) {
+    if (!el) return;
+    el.className = 'status' + (kind ? ' ' + kind : '');
+    el.textContent = text || '';
+  }
+
+  function setActiveDevice(name) {
+    if (activeDevice) {
+      activeDevice.textContent = name || 'Not set';
+    }
+  }
+
+  function normalizeLines(text) {
+    return String(text || '')
+      .split(/\r?\n/)
+      .map(function(line){ return line.trim(); })
+      .filter(Boolean);
+  }
+
+  function renderDevices(text) {
+    if (!deviceList) return;
+    deviceList.innerHTML = '';
+    var devices = normalizeLines(text);
+    if (!devices.length) {
+      deviceList.innerHTML = '<div class="hint">No devices reported.</div>';
+      return;
+    }
+    devices.forEach(function(name){
+      var row = document.createElement('div');
+      row.className = 'device';
+      row.setAttribute('role', 'listitem');
+
+      var label = document.createElement('div');
+      label.className = 'device-name';
+      label.textContent = name;
+
+      var button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = 'Use this target';
+      button.setAttribute('data-device', name);
+      button.addEventListener('click', function(){
+        setStatus(deviceStatus, '', 'Setting active target…');
+        if (window.htmx) {
+          htmx.ajax('GET', '/ytcast/set-code?code=' + encodeURIComponent(name), {swap: 'none', source: button});
+        }
+      });
+
+      row.appendChild(label);
+      row.appendChild(button);
+      deviceList.appendChild(row);
+    });
+  }
+
+  if (pairForm) {
+    pairForm.addEventListener('submit', function(){
+      setStatus(pairStatus, '', 'Pairing…');
+    });
+  }
+
+  if (window.htmx) {
+    document.body.addEventListener('htmx:afterRequest', function(evt){
+      var path = evt.detail && evt.detail.requestConfig && evt.detail.requestConfig.path || '';
+      var xhr = evt.detail && evt.detail.xhr;
+      var status = xhr ? xhr.status : 0;
+      var response = xhr && xhr.responseText ? xhr.responseText.trim() : '';
+
+      if (path === '/ytcast/pair') {
+        if (status >= 200 && status < 300) {
+          var code = pairCode ? pairCode.value.trim() : '';
+          setStatus(pairStatus, 'ok', 'Pairing completed. Setting the paired code as the active target…');
+          if (code) {
+            htmx.ajax('GET', '/ytcast/set-code?code=' + encodeURIComponent(code), {swap: 'none', source: pairForm});
+          }
+        } else {
+          setStatus(pairStatus, 'error', response || 'Failed to pair.');
+        }
+      }
+
+      if (path === '/ytcast/list') {
+        if (status >= 200 && status < 300) {
+          renderDevices(response);
+          setStatus(deviceStatus, 'ok', 'Device list loaded.');
+        } else {
+          setStatus(deviceStatus, 'error', response || 'Failed to load devices.');
+        }
+      }
+
+      if (path === '/ytcast/set-code') {
+        var params = evt.detail.requestConfig && evt.detail.requestConfig.parameters;
+        var code = params && params.code ? params.code : '';
+        if (status >= 200 && status < 300) {
+          setActiveDevice(code);
+          if (pairStatus && pairStatus.textContent.indexOf('Pairing completed.') === 0) {
+            setStatus(pairStatus, 'ok', 'Paired and selected ' + code + ' for playback.');
+          } else {
+            setStatus(deviceStatus, 'ok', 'Active target set to ' + code + '.');
+          }
+        } else {
+          var text = response || 'Failed to set active target.';
+          if (pairStatus && pairStatus.textContent.indexOf('Pairing completed.') === 0) {
+            setStatus(pairStatus, 'error', text);
+          } else {
+            setStatus(deviceStatus, 'error', text);
+          }
+        }
+      }
+    });
+
+    document.body.addEventListener('htmx:beforeRequest', function(evt){
+      var path = evt.detail && evt.detail.requestConfig && evt.detail.requestConfig.path || '';
+      if (path === '/ytcast/list') {
+        setStatus(deviceStatus, '', 'Loading devices…');
       }
     });
   }
