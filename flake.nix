@@ -88,7 +88,7 @@
             name = "go-tests";
             # Use local working tree for tests too
             src = ./.;
-            nativeBuildInputs = [ pkgs.go_1_24 ];
+            nativeBuildInputs = [ pkgs.go ];
             buildPhase = ''
               export HOME="$TMPDIR"
               export GOCACHE="$TMPDIR/go-build"
