@@ -45,7 +45,7 @@
               "-w"
             ];
             # pin Go toolchain
-            go = pkgs.go_1_26;
+            go = pkgs.go;
             # Ensure ytcast is available at runtime by wrapping the binary
             nativeBuildInputs = [ pkgs.makeWrapper ];
             postInstall = ''
