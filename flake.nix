@@ -2,7 +2,7 @@
   description = "castweb";
 
   # Use a nixpkgs with Go >= 1.24.6
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  inputs.nixpkgs.url = "github:nixos/nixpkgs/nixos-26.05";
 
   outputs =
     { self, nixpkgs }:
@@ -45,7 +45,7 @@
               "-w"
             ];
             # pin Go toolchain
-            go = pkgs.go_1_24;
+            go = pkgs.go;
             # Ensure ytcast is available at runtime by wrapping the binary
             nativeBuildInputs = [ pkgs.makeWrapper ];
             postInstall = ''
@@ -64,7 +64,8 @@
         {
           default = pkgs.mkShell {
             packages = with pkgs; [
-              go_1_24
+              #go_1_24
+              go_latest
               gopls
               gotools
               gotestsum
@@ -87,7 +88,7 @@
             name = "go-tests";
             # Use local working tree for tests too
             src = ./.;
-            nativeBuildInputs = [ pkgs.go_1_24 ];
+            nativeBuildInputs = [ pkgs.go ];
             buildPhase = ''
               export HOME="$TMPDIR"
               export GOCACHE="$TMPDIR/go-build"
